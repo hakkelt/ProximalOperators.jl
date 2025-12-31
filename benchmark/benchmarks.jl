@@ -3,6 +3,9 @@ using BenchmarkTools
 using LinearAlgebra
 using SparseArrays
 using Random
+import Pkg
+
+Pkg.instantiate()
 
 const SUITE = BenchmarkGroup()
 
