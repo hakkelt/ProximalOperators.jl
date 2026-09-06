@@ -45,6 +45,7 @@ using SparseArrays
 
 include("indAffineDirect.jl")
 include("indAffineIterative.jl")
+include("indAffineCG.jl")
 
 function prox_naive(f::IndAffine, x, gamma)
     y = x + f.A'*((f.A*f.A')\(f.b - f.A*x))
