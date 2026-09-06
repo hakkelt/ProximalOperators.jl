@@ -147,6 +147,7 @@ end
     include("test_moreauEnvelope.jl")
     include("test_precompose.jl")
     include("test_pointwiseMinimum.jl")
+    include("test_proximalAverage.jl")
     include("test_postcompose.jl")
     include("test_regularize.jl")
     include("test_separableSum.jl")
