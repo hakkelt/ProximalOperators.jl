@@ -132,6 +132,10 @@ end
     include("test_indHyperslab.jl")
     include("test_graph.jl")
     include("test_normL1plusL2.jl")
+    # Appended last within this group: several later test files draw from the task-local RNG that
+    # `@testset` reseeds per set, and `test_precomposedSlicedSeparableSum.jl` is numerically fragile
+    # for some draws, so inserting a testset ahead of them changes what they get.
+    include("test_indAffineCG.jl")
 end
 
 include("test_calls.jl")
