@@ -1,6 +1,6 @@
 name = "ProximalOperators"
 uuid = "a725b495-10eb-56fe-b38b-717eba820537"
-version = "0.18.0"
+version = "0.17.0"
 
 [workspace]
 projects = ["docs", "test", "benchmark"]
