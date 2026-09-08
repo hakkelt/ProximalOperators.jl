@@ -26,6 +26,34 @@ function IndPolyhedral(args...; solver=:osqp)
     end
 end
 
-# including concrete types
+# IndPolyhedral: OSQP implementation
+#
+# The struct below is defined here so that the `solver=:osqp` dispatch above can
+# refer to it, but everything that actually needs OSQP -- the constructors,
+# `prox!`, the function evaluation and `prox_naive` -- lives in the package
+# extension `ext/ProximalOperatorsOSQPExt.jl`, loaded once OSQP is available
+# (`using OSQP`). Without OSQP loaded, constructing an `IndPolyhedralOSQP`
+# (directly or via `IndPolyhedral(...; solver=:osqp)`) raises an informative
+# error.
 
-include("indPolyhedralOSQP.jl")
+struct IndPolyhedralOSQP{R, M} <: IndPolyhedral
+    l::AbstractVector{R}
+    A::AbstractMatrix{R}
+    u::AbstractVector{R}
+    mod::M
+    # Explicit inner constructor: suppresses the auto-generated 4-positional-arg
+    # outer constructor, which would otherwise shadow the `(l, A, xmin, xmax)`
+    # constructor added by ProximalOperatorsOSQPExt.
+    IndPolyhedralOSQP{R, M}(l, A, u, mod) where {R, M} = new{R, M}(l, A, u, mod)
+end
+
+is_proximable(::Type{<:IndPolyhedralOSQP}) = false
+
+# The real constructors are added to this function by ProximalOperatorsOSQPExt;
+# this fallback only fires when OSQP is not loaded.
+function IndPolyhedralOSQP(args...; kwargs...)
+    error(
+        "IndPolyhedralOSQP requires the OSQP package: run `using OSQP` before " *
+        "constructing IndPolyhedralOSQP(...) or IndPolyhedral(...; solver=:osqp)."
+    )
+end
