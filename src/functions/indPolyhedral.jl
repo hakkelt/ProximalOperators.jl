@@ -14,6 +14,9 @@ S = \\{ x : x_\\min \\leq x \\leq x_\\max, l \\leq Ax \\leq u \\}.
 ```
 Matrix `A` is a mandatory argument; when any of the bounds is not provided,
 it is assumed to be (plus or minus) infinity.
+
+The default `solver=:osqp` backend is provided by a package extension: load it
+with `using OSQP` before constructing the object, otherwise an error is raised.
 """
 function IndPolyhedral(args...; solver=:osqp)
     if solver == :osqp

@@ -1,25 +1,20 @@
 # IndPolyhedral: OSQP implementation
+#
+# The solver-backed constructors and `prox!` live in the package extension
+# `ext/ProximalOperatorsOSQPExt.jl`, which is only loaded once the OSQP package
+# is available (`using OSQP`). Without OSQP loaded, constructing an
+# `IndPolyhedralOSQP` (directly or via `IndPolyhedral(...; solver=:osqp)`)
+# raises an informative error.
 
-using OSQP
-
-struct IndPolyhedralOSQP{R} <: IndPolyhedral
+struct IndPolyhedralOSQP{R, M} <: IndPolyhedral
     l::AbstractVector{R}
     A::AbstractMatrix{R}
     u::AbstractVector{R}
-    mod::OSQP.Model
-    function IndPolyhedralOSQP{R}(
-        l::AbstractVector{R}, A::AbstractMatrix{R}, u::AbstractVector{R}
-    ) where R
-        m, n = size(A)
-        mod = OSQP.Model()
-        if !all(l .<= u)
-            error("function is improper (are some bounds inverted?)")
-        end
-        OSQP.setup!(mod; P=SparseMatrixCSC{R}(I, n, n), l=l, A=sparse(A), u=u, verbose=false,
-            eps_abs=eps(R), eps_rel=eps(R),
-            eps_prim_inf=eps(R), eps_dual_inf=eps(R))
-        new(l, A, u, mod)
-    end
+    mod::M
+    # Explicit inner constructor: suppresses the auto-generated 4-positional-arg
+    # outer constructor, which would otherwise shadow the `(l, A, xmin, xmax)`
+    # constructor added by ProximalOperatorsOSQPExt.
+    IndPolyhedralOSQP{R, M}(l, A, u, mod) where {R, M} = new{R, M}(l, A, u, mod)
 end
 
 # properties
@@ -27,31 +22,16 @@ end
 is_proximable(::Type{<:IndPolyhedralOSQP}) = false
 
 # constructors
+#
+# The real implementations are added to this function by
+# ProximalOperatorsOSQPExt; this fallback only fires when OSQP is not loaded.
 
-IndPolyhedralOSQP(
-    l::AbstractVector{R}, A::AbstractMatrix{R}, u::AbstractVector{R}
-) where R =
-    IndPolyhedralOSQP{R}(l, A, u)
-
-IndPolyhedralOSQP(
-    l::AbstractVector{R}, A::AbstractMatrix{R}, u::AbstractVector{R},
-    xmin::AbstractVector{R}, xmax::AbstractVector{R}
-) where R =
-    IndPolyhedralOSQP([l; xmin], [A; I], [u; xmax])
-
-IndPolyhedralOSQP(
-    l::AbstractVector{R}, A::AbstractMatrix{R}, args...
-) where R =
-    IndPolyhedralOSQP(
-        l, SparseMatrixCSC(A), R(Inf).*ones(R, size(A, 1)), args...
+function IndPolyhedralOSQP(args...; kwargs...)
+    error(
+        "IndPolyhedralOSQP requires the OSQP package: run `using OSQP` before " *
+        "constructing IndPolyhedralOSQP(...) or IndPolyhedral(...; solver=:osqp)."
     )
-
-IndPolyhedralOSQP(
-    A::AbstractMatrix{R}, u::AbstractVector{R}, args...
-) where R =
-    IndPolyhedralOSQP(
-        R(-Inf).*ones(R, size(A, 1)), SparseMatrixCSC(A), u, args...
-    )
+end
 
 # function evaluation
 
@@ -59,16 +39,6 @@ function (f::IndPolyhedralOSQP)(x)
     R = eltype(x)
     Ax = f.A * x
     return all(f.l .<= Ax .<= f.u) ? R(0) : Inf
-end
-
-# prox
-
-function prox!(y, f::IndPolyhedralOSQP, x, gamma)
-    R = eltype(x)
-    OSQP.update!(f.mod; q=-x)
-    results = OSQP.solve!(f.mod)
-    y .= results.x
-    return R(0)
 end
 
 # naive prox
