@@ -130,6 +130,7 @@ end
     include("test_quadratic.jl")
     include("test_linear.jl")
     include("test_indHyperslab.jl")
+    include("test_indRealBox.jl")
     include("test_graph.jl")
     include("test_normL1plusL2.jl")
 end
