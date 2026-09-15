@@ -30,6 +30,9 @@ is_convex(::Type{DistL2{R, T}}) where {R, T} = is_convex(T)
 
 DistL2(ind::T, lambda::R=1) where {R, T} = DistL2{R, T}(ind, lambda)
 
+# no scratch space of its own: `prox!`/`gradient!` use `y` as temporary storage
+preallocate(f::DistL2, x) = DistL2(preallocate(f.ind, x), f.lambda)
+
 function (f::DistL2)(x)
     p, = prox(f.ind, x)
     return f.lambda * normdiff(x, p)

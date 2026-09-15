@@ -21,19 +21,20 @@ Bauschke, Combettes "Convex Analysis and Monotone Operator Theory in Hilbert
 Spaces", 2nd edition, 2016. The same result is Prop. 23.32 in the 1st edition
 of the same book.
 """
-struct Precompose{T, M, U, V}
+struct Precompose{T, M, U, V, B}
     f::T
     L::M
     mu::U
     b::V
-    function Precompose{T, M, U, V}(f::T, L::M, mu::U, b::V) where {T, M, U, V}
+    buf::B
+    function Precompose{T, M, U, V, B}(f::T, L::M, mu::U, b::V, buf::B) where {T, M, U, V, B}
         if !is_convex(f)
             error("f must be convex")
         end
         if any(mu .<= 0)
             error("elements of μ must be positive")
         end
-        new(f, L, mu, b)
+        new(f, L, mu, b, buf)
     end
 end
 
@@ -48,19 +49,46 @@ is_locally_smooth(::Type{<:Precompose{T}}) where T = is_locally_smooth(T)
 is_generalized_quadratic(::Type{<:Precompose{T}}) where T = is_generalized_quadratic(T)
 is_strongly_convex(::Type{<:Precompose{T}}) where T = is_strongly_convex(T)
 
-Precompose(f::T, L::M, mu::U, b::V) where {T, M, U, V} = Precompose{T, M, U, V}(f, L, mu, b)
+Precompose(f::T, L::M, mu::U, b::V; buf=nothing) where {T, M, U, V} =
+    Precompose{T, M, U, V, typeof(buf)}(f, L, mu, b, buf)
+
+Precompose{T, M, U, V}(f::T, L::M, mu::U, b::V) where {T, M, U, V} =
+    Precompose{T, M, U, V, Nothing}(f, L, mu, b, nothing)
 
 Precompose(f::T, L::M, mu::U) where {T, M, U} = Precompose(f, L, mu, 0)
+
+function preallocate(g::Precompose, x)
+    res = g.L * x .+ g.b
+    return Precompose(
+        preallocate(g.f, res), g.L, g.mu, g.b;
+        buf = (sig = input_signature(x), res = res, out = similar(res)),
+    )
+end
 
 function (g::Precompose)(x)
     return g.f(g.L * x .+ g.b)
 end
 
+# Returns the buffers with `res` already set to `L*x + b`. Unlike the generic
+# `get_buffers`, this avoids recomputing `L*x` on the non-preallocated path.
+@inline precompose_buffers(g::Precompose, x) = _precompose_buffers(g, g.buf, x)
+
+@inline function _precompose_buffers(g::Precompose, ::Nothing, x)
+    res = g.L * x .+ g.b
+    return (sig = nothing, res = res, out = similar(res))
+end
+
+@inline function _precompose_buffers(g::Precompose, buf, x)
+    check_signature(buf.sig, x, g)
+    mul!(buf.res, g.L, x)
+    buf.res .+= g.b
+    return buf
+end
+
 function gradient!(y, g::Precompose, x)
-    res = g.L*x .+ g.b
-    gradres = similar(res)
-    v = gradient!(gradres, g.f, res)
-    mul!(y, adjoint(g.L), gradres)
+    b = precompose_buffers(g, x)
+    v = gradient!(b.out, g.f, b.res)
+    mul!(y, adjoint(g.L), b.out)
     return v
 end
 
@@ -75,12 +103,11 @@ function prox!(y, g::Precompose, x, gamma)
     #     prox_f(x) = prox_h(x + b) - b
     # Then one can apply the above mentioned result to g(x) = f(Lx).
     #
-    res = g.L*x .+ g.b
-    proxres = similar(res)
-    v = prox!(proxres, g.f, res, g.mu.*gamma)
-    proxres .-= res
-    proxres ./= g.mu
-    mul!(y, adjoint(g.L), proxres)
+    b = precompose_buffers(g, x)
+    v = prox!(b.out, g.f, b.res, g.mu.*gamma)
+    b.out .-= b.res
+    b.out ./= g.mu
+    mul!(y, adjoint(g.L), b.out)
     y .+= x
     return v
 end

@@ -14,16 +14,17 @@ With a nonnegative array parameter λ, return the weighted ``L_1`` norm
 f(x) = ∑_i λ_i|x_i|.
 ```
 """
-struct NormL1{T}
+struct NormL1{T, B}
     lambda::T
-    function NormL1{T}(lambda::T) where T
+    buf::B
+    function NormL1{T, B}(lambda::T, buf::B) where {T, B}
         if !(eltype(lambda) <: Real)
             error("λ must be real")
         end
         if any(lambda .< 0)
             error("λ must be nonnegative")
         else
-            new(lambda)
+            new(lambda, buf)
         end
     end
 end
@@ -32,11 +33,25 @@ is_separable(f::Type{<:NormL1}) = true
 is_convex(f::Type{<:NormL1}) = true
 is_positively_homogeneous(f::Type{<:NormL1}) = true
 
-NormL1(lambda::R=1) where R = NormL1{R}(lambda)
+NormL1(lambda::R=1; buf=nothing) where R = NormL1{R, typeof(buf)}(lambda, buf)
+NormL1{R}(lambda::R) where R = NormL1{R, Nothing}(lambda, nothing)
+
+# only the weighted variant needs scratch space, for the ∑_i λ_i|y_i| it returns
+preallocate(f::NormL1{<:AbstractArray}, x::AbstractArray) = NormL1(
+    f.lambda; buf = (sig = input_signature(x), lam_abs_y = similar(x, real(eltype(x))))
+)
 
 (f::NormL1)(x) = f.lambda * norm(x, 1)
 
 (f::NormL1{<:AbstractArray})(x) = norm(f.lambda .* x, 1)
+
+# ∑_i λ_i |y_i|, computed through the buffer so that the summation order (and
+# therefore the result, bit for bit) is the same as `sum(lambda .* abs.(y))`
+@inline function weighted_l1(f::NormL1{<:AbstractArray}, x, y)
+    t = get_buffers(f, x).lam_abs_y
+    t .= f.lambda .* abs.(y)
+    return sum(t)
+end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma)
     @assert length(y) == length(x) == length(f.lambda)
@@ -44,7 +59,7 @@ function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma)
         gl = gamma * f.lambda[i]
         y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
     end
-    return sum(f.lambda .* abs.(y))
+    return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma)
@@ -53,7 +68,7 @@ function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma
         gl = gamma * f.lambda[i]
         y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
     end
-    return sum(f.lambda .* abs.(y))
+    return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Real}, gamma)
@@ -84,7 +99,7 @@ function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma::A
         gl = gamma[i] * f.lambda[i]
         y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
     end
-    return sum(f.lambda .* abs.(y))
+    return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma::AbstractArray)
@@ -93,7 +108,7 @@ function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma
         gl = gamma[i] * f.lambda[i]
         y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
     end
-    return sum(f.lambda .* abs.(y))
+    return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Real}, gamma::AbstractArray)

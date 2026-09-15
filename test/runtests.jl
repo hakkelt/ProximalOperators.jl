@@ -165,6 +165,10 @@ end
     include("test_equivalences.jl")
 end
 
+@testset "Preallocation" begin
+    include("test_preallocate.jl")
+end
+
 include("test_optimality_conditions.jl")
 
 @testset "Hardcoded" begin

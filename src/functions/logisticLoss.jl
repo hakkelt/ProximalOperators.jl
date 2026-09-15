@@ -11,18 +11,26 @@ f(x) = μ⋅∑_i log(1+exp(-y_i⋅x_i))
 ```
 where `y` is an array and `μ` is a positive parameter.
 """
-struct LogisticLoss{T, R}
+struct LogisticLoss{T, R, B}
     y::T
     mu::R
-    function LogisticLoss{T, R}(y::T, mu::R) where {T, R}
+    buf::B
+    function LogisticLoss{T, R, B}(y::T, mu::R, buf::B) where {T, R, B}
         if mu <= R(0)
             error("parameter mu must be positive")
         end
-        new(y, mu)
+        new(y, mu, buf)
     end
 end
 
-LogisticLoss(y::T, mu::R=1) where {R, T} = LogisticLoss{T, R}(y, mu)
+LogisticLoss(y::T, mu::R=1; buf=nothing) where {R, T} =
+    LogisticLoss{T, R, typeof(buf)}(y, mu, buf)
+
+LogisticLoss{T, R}(y::T, mu::R) where {T, R} = LogisticLoss{T, R, Nothing}(y, mu, nothing)
+
+preallocate(f::LogisticLoss, x::AbstractArray) = LogisticLoss(
+    f.y, f.mu; buf = (sig = input_signature(x), expyz = similar(x), Fz = similar(x))
+)
 
 is_separable(f::Type{<:LogisticLoss}) = true
 is_convex(f::Type{<:LogisticLoss}) = true
@@ -77,13 +85,13 @@ end
 function prox!(z, f::LogisticLoss, x, gamma)
     R = eltype(x)
     c = R(1) / gamma # convexity modulus
-    L = maximum(abs, f.mu .* f.y) + c # Lipschitz constant
+    L = f.mu * maximum(abs, f.y) + c # Lipschitz constant (f.mu > 0)
+    b = get_buffers(f, x)
+    expyz, Fz = b.expyz, b.Fz
     z .= x
-    expyz = similar(z)
-    Fz = similar(z)
     for k = 1:20
         expyz .= exp.(f.y .* z)
-        Fz .= z .- x .- f.mu * gamma * (f.y ./ (1 .+ expyz))
+        Fz .= z .- x .- (f.mu * gamma) .* (f.y ./ (1 .+ expyz))
         z .-= Fz ./ L
     end
     expyz .= exp.(f.y .* z)
