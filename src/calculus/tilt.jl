@@ -58,3 +58,6 @@ function prox_naive(g::Tilt, x, gamma)
     y, v = prox_naive(g.f, x .- gamma .* g.a, gamma)
     return y, v + real(dot(g.a, y)) + g.b
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Tilt{T}}) where T = device_tier(T)

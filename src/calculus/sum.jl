@@ -61,3 +61,6 @@ function gradient!(grad, sumobj::Sum, x)
     end
     return val
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{T}) where T <: Sum = _combine_tiers(map(device_tier, component_types(T))...)

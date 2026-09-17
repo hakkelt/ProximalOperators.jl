@@ -61,3 +61,6 @@ function prox_naive(g::Postcompose, x, gamma)
     y, v = prox_naive(g.f, x, g.a * gamma)
     return y, g.a * v + g.b
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Postcompose{T}}) where T = device_tier(T)

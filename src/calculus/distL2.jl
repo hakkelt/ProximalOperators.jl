@@ -72,3 +72,6 @@ function prox_naive(f::DistL2, x, gamma)
     end
     return p, R(0)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:DistL2{<:Any, T}}) where T = device_tier(T)

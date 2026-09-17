@@ -3,19 +3,22 @@
 export LogisticLoss
 
 """
-    LogisticLoss(y, μ=1)
+    LogisticLoss(y, μ=1; threaded=true)
 
 Return the function
 ```math
 f(x) = μ⋅∑_i log(1+exp(-y_i⋅x_i))
 ```
 where `y` is an array and `μ` is a positive parameter.
+
+`threaded = false` forbids this operator from using more than one thread; see
+[`is_threaded`](@ref).
 """
-struct LogisticLoss{T, R, B}
+struct LogisticLoss{T, R, B, Th}
     y::T
     mu::R
     buf::B
-    function LogisticLoss{T, R, B}(y::T, mu::R, buf::B) where {T, R, B}
+    function LogisticLoss{T, R, B, Th}(y::T, mu::R, buf::B) where {T, R, B, Th}
         if mu <= R(0)
             error("parameter mu must be positive")
         end
@@ -23,13 +26,18 @@ struct LogisticLoss{T, R, B}
     end
 end
 
-LogisticLoss(y::T, mu::R=1; buf=nothing) where {R, T} =
-    LogisticLoss{T, R, typeof(buf)}(y, mu, buf)
+@threadable LogisticLoss{<:Any, <:Any, <:Any, Th} Transcendental
 
-LogisticLoss{T, R}(y::T, mu::R) where {T, R} = LogisticLoss{T, R, Nothing}(y, mu, nothing)
+LogisticLoss(y::T, mu::R=1; buf=nothing, threaded::Bool=true) where {R, T} =
+    LogisticLoss{T, R, typeof(buf), threaded}(y, mu, buf)
 
-preallocate(f::LogisticLoss, x::AbstractArray) = LogisticLoss(
-    f.y, f.mu; buf = (sig = input_signature(x), expyz = similar(x), Fz = similar(x))
+LogisticLoss{T, R}(y::T, mu::R) where {T, R} =
+    LogisticLoss{T, R, Nothing, true}(y, mu, nothing)
+
+preallocate(f::LogisticLoss{<:Any, <:Any, <:Any, Th}, x::AbstractArray) where Th = LogisticLoss(
+    f.y, f.mu;
+    buf = (sig = input_signature(x), expyz = similar(x), Fz = similar(x)),
+    threaded = Th,
 )
 
 is_separable(f::Type{<:LogisticLoss}) = true
@@ -42,8 +50,10 @@ is_proximable(f::Type{<:LogisticLoss}) = false
 function (f::LogisticLoss)(x)
     R = eltype(x)
     val = R(0)
-    for k in eachindex(x)
-        expyx = exp(f.y[k] * x[k])
+    fy = f.y
+    strategy = execution_strategy(f, x)
+    @transcendental_loop strategy reduction = ((+, val),) for k in eachindex(x)
+        expyx = exp(fy[k] * x[k])
         val += log(R(1) + R(1) / expyx)
     end
     return f.mu * val
@@ -57,9 +67,11 @@ end
 function gradient!(g, f::LogisticLoss, x)
     R = eltype(x)
     val = R(0)
-    for k in eachindex(x)
-        expyx = exp(f.y[k] * x[k])
-        g[k] = -f.mu * f.y[k] / (R(1) + expyx)
+    fy, mu = f.y, f.mu
+    strategy = execution_strategy(f, x)
+    @transcendental_loop strategy reduction = ((+, val),) for k in eachindex(x, g)
+        expyx = exp(fy[k] * x[k])
+        g[k] = -mu * fy[k] / (R(1) + expyx)
         val += log(R(1) + R(1) / expyx)
     end
     return f.mu * val
@@ -96,7 +108,8 @@ function prox!(z, f::LogisticLoss, x, gamma)
     end
     expyz .= exp.(f.y .* z)
     val = R(0)
-    for k in eachindex(expyz)
+    strategy = execution_strategy(f, x)
+    @transcendental_loop strategy reduction = ((+, val),) for k in eachindex(expyz)
         val += log(R(1) + R(1)/expyz[k])
     end
     return f.mu * val

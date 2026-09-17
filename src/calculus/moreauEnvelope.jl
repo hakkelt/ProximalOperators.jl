@@ -63,3 +63,6 @@ end
 # NOTE the following is just so we can use certain test helpers
 # TODO properly implement the following
 prox_naive(f::MoreauEnvelope, x, gamma) = prox(f, x, gamma)
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:MoreauEnvelope{<:Any, T}}) where T = device_tier(T)

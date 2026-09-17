@@ -78,3 +78,6 @@ function prox_naive(f::IndBallRank, x, gamma)
     y = F.U[:,1:f.r]*(Diagonal(F.S[1:f.r])*F.V[:,1:f.r]')
     return y, R(0)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:IndBallRank}) = :device_lapack

@@ -3,7 +3,7 @@
 export NormL1
 
 """
-    NormL1(λ=1)
+    NormL1(λ=1; threaded=true)
 
 With a nonnegative scalar parameter λ, return the ``L_1`` norm
 ```math
@@ -13,11 +13,14 @@ With a nonnegative array parameter λ, return the weighted ``L_1`` norm
 ```math
 f(x) = ∑_i λ_i|x_i|.
 ```
+
+`threaded = false` forbids this operator from using more than one thread; see
+[`is_threaded`](@ref).
 """
-struct NormL1{T, B}
+struct NormL1{T, B, Th}
     lambda::T
     buf::B
-    function NormL1{T, B}(lambda::T, buf::B) where {T, B}
+    function NormL1{T, B, Th}(lambda::T, buf::B) where {T, B, Th}
         if !(eltype(lambda) <: Real)
             error("λ must be real")
         end
@@ -33,12 +36,17 @@ is_separable(f::Type{<:NormL1}) = true
 is_convex(f::Type{<:NormL1}) = true
 is_positively_homogeneous(f::Type{<:NormL1}) = true
 
-NormL1(lambda::R=1; buf=nothing) where R = NormL1{R, typeof(buf)}(lambda, buf)
-NormL1{R}(lambda::R) where R = NormL1{R, Nothing}(lambda, nothing)
+@threadable NormL1{<:Any, <:Any, Th} Arithmetic
+
+NormL1(lambda::R=1; buf=nothing, threaded::Bool=true) where R =
+    NormL1{R, typeof(buf), threaded}(lambda, buf)
+NormL1{R}(lambda::R) where R = NormL1{R, Nothing, true}(lambda, nothing)
 
 # only the weighted variant needs scratch space, for the ∑_i λ_i|y_i| it returns
-preallocate(f::NormL1{<:AbstractArray}, x::AbstractArray) = NormL1(
-    f.lambda; buf = (sig = input_signature(x), lam_abs_y = similar(x, real(eltype(x))))
+preallocate(f::NormL1{<:AbstractArray, <:Any, Th}, x::AbstractArray) where Th = NormL1(
+    f.lambda;
+    buf = (sig = input_signature(x), lam_abs_y = similar(x, real(eltype(x)))),
+    threaded = Th,
 )
 
 (f::NormL1)(x) = f.lambda * norm(x, 1)
@@ -53,83 +61,61 @@ preallocate(f::NormL1{<:AbstractArray}, x::AbstractArray) = NormL1(
     return sum(t)
 end
 
+# soft-thresholding, the one kernel this whole file is made of
+@inline soft_threshold(xi::Real, gl) = xi + (xi <= -gl ? gl : (xi >= gl ? -gl : -xi))
+@inline soft_threshold(xi::Complex, gl) = sign(xi) * (abs(xi) <= gl ? zero(abs(xi)) : abs(xi) - gl)
+
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma)
     @assert length(y) == length(x) == length(f.lambda)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma * f.lambda[i]
-        y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
-    end
+    map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma)
     @assert length(y) == length(x) == length(f.lambda)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma * f.lambda[i]
-        y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
-    end
+    map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Real}, gamma)
     @assert length(y) == length(x)
-    n1y = eltype(x)(0)
     gl = gamma * f.lambda
-    @inbounds @simd for i in eachindex(x)
-        y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
-        n1y += y[i] > 0 ? y[i] : -y[i]
-    end
+    n1y = map_reduce_prox!(f, y, xi -> soft_threshold(xi, gl), yi -> yi > 0 ? yi : -yi, x)
     return f.lambda * n1y
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Complex}, gamma)
     @assert length(y) == length(x)
     gl = gamma * f.lambda
-    n1y = real(eltype(x))(0)
-    @inbounds @simd for i in eachindex(x)
-        y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
-        n1y += abs(y[i])
-    end
+    n1y = map_reduce_prox!(f, y, xi -> soft_threshold(xi, gl), abs, x)
     return f.lambda * n1y
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(f.lambda) == length(gamma)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma[i] * f.lambda[i]
-        y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
-    end
+    map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(f.lambda) == length(gamma)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma[i] * f.lambda[i]
-        y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
-    end
+    map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Real}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(gamma)
-    n1y = eltype(x)(0)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma[i] * f.lambda
-        y[i] = x[i] + (x[i] <= -gl ? gl : (x[i] >= gl ? -gl : -x[i]))
-        n1y += y[i] > 0 ? y[i] : -y[i]
-    end
+    n1y = map_reduce_prox_idx!(
+        f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda), (i, yi) -> yi > 0 ? yi : -yi, x
+    )
     return f.lambda * n1y
 end
 
 function prox!(y, f::NormL1, x::AbstractArray{<:Complex}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(gamma)
-    n1y = real(eltype(x))(0)
-    @inbounds @simd for i in eachindex(x)
-        gl = gamma[i] * f.lambda
-        y[i] = sign(x[i]) * (abs(x[i]) <= gl ? 0 : abs(x[i]) - gl)
-        n1y += abs(y[i])
-    end
+    n1y = map_reduce_prox_idx!(
+        f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda), (i, yi) -> abs(yi), x
+    )
     return f.lambda * n1y
 end
 

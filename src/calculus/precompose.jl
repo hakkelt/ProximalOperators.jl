@@ -118,3 +118,6 @@ function prox_naive(g::Precompose, x, gamma)
     y = x + g.L'*((proxres .- res)./g.mu)
     return y, v
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Precompose{T}}) where T = device_tier(T)
