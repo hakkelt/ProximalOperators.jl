@@ -40,11 +40,28 @@ function (f::SqrHingeLoss)(x)
     return f.mu * sum(max.(R(0), (R(1) .- f.y .* x)).^2)
 end
 
-function gradient!(y, f::SqrHingeLoss, x)
+function gradient!(g, f::SqrHingeLoss, x)
     R = eltype(x)
     fy, mu = f.y, f.mu
+    # Inline `@elementwise_loop`, guarded by `is_cpu_storage`, rather than unconditionally
+    # calling `map_reduce_prox_idx!`'s `h`/`g` closures: those closures are a call boundary
+    # that neither `@inbounds` nor `@fastmath` crosses, so their division/branch cost was
+    # paid unmitigated on the threaded path (see `prox!` below for the measurement). Device
+    # storage still goes through `map_reduce_prox_idx!`, whose `_map_reduce_prox_idx!` has a
+    # GPU-native override in `GpuExt`; inlining the loop here would bypass that override and
+    # try to scalar-index the device array instead.
+    if is_cpu_storage(x)
+        acc = R(0)
+        @elementwise_loop execution_strategy(f, x) reduction = ((+, acc),) for i in eachindex(x, g)
+            xi = x[i]
+            zz = 1 - fy[i] * xi
+            g[i] = zz > 0 ? -2 * mu * fy[i] * zz : R(0)
+            acc += max(R(0), 1 - fy[i] * xi)^2
+        end
+        return f.mu * acc
+    end
     acc = map_reduce_prox_idx!(
-        f, y,
+        f, g,
         function (i, xi)
             zz = 1 - fy[i] * xi
             zz > 0 ? -2 * mu * fy[i] * zz : R(0)
@@ -55,13 +72,32 @@ function gradient!(y, f::SqrHingeLoss, x)
     return f.mu * acc
 end
 
+# Inline `@elementwise_loop`, guarded by `is_cpu_storage`: going through
+# `map_reduce_prox_idx!`'s `h`/`g` closures unconditionally left this kernel's division and
+# bounds checks outside both `@inbounds` and `@fastmath` (neither crosses a call boundary),
+# which on the threaded path serialized the division-heavy, branchy body badly enough to lose
+# to the serial `@simd` path outright -- measured at 2^20 elements over 4 threads: 2192us
+# threaded against 1022us serial. Writing the loop inline puts the same body under the
+# threaded branch's `@inbounds @fastmath` (see `_inbounds_body` in `execution.jl`), which
+# fixes it: 283us threaded against 945us serial. Device storage keeps going through
+# `map_reduce_prox_idx!`, whose GPU-native override in `GpuExt` the inline loop would
+# otherwise bypass, scalar-indexing the device array instead.
 function prox!(z, f::SqrHingeLoss, x, gamma)
     R = eltype(x)
     fy, mu = f.y, f.mu
-    # the `if`/`else` became a select so the body has a single exit: only the accumulation is
-    # really conditional, and it contributes zero on the inactive side. The contribution
-    # depends on the *input* at that index as well as the output, hence the index-taking
-    # helper rather than the plain one.
+    if is_cpu_storage(x)
+        v = R(0)
+        @elementwise_loop execution_strategy(f, x) reduction = ((+, v),) for k in eachindex(x, z)
+            yk = fy[k]
+            xk = x[k]
+            zk = yk * xk >= 1 ? xk : (xk + 2 * mu * gamma * yk) / (1 + 2 * mu * gamma * yk^2)
+            z[k] = zk
+            inactive = yk * xk >= 1
+            r = 1 - yk * zk
+            v += inactive ? R(0) : r * r
+        end
+        return f.mu * v
+    end
     v = map_reduce_prox_idx!(
         f, z,
         function (k, xk)

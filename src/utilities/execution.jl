@@ -319,8 +319,20 @@ _batch_call(source, opts, loop) = Expr(:macrocall, _BATCH_HEAD, source, opts...,
 
 # Polyester's `@batch` insists on a bare `for` -- it rejects `@inbounds for ...` outright --
 # so the elision goes around the loop *body* instead of around the loop.
+#
+# `@fastmath` goes around the body for the same reason `@simd` goes around the serial
+# branch's loop: without it, a division- or branch-heavy body (`SqrHingeLoss`'s prox kernel,
+# say) keeps strict IEEE ordering per thread, which serializes the reduction and stalls the
+# pipeline on the division latency -- measured at 2038us for 2^20 elements over 4 threads,
+# slower than the 574us serial `@simd` path it should be beating. `@simd` grants the serial
+# branch that same reassociation freedom already, so giving the threaded branch `@fastmath`
+# is matching a relaxation the package already accepts elsewhere, not adding a new one:
+# with it, the same body drops to 295us. Every `@elementwise_loop`/`@transcendental_loop`
+# reduction in the package already tolerates this (their tests pass under `@simd`), so this
+# is not a new numerical contract, only extending the existing one to the threaded branch.
 function _inbounds_body(loop::Expr)
-    body = Expr(:macrocall, GlobalRef(Base, Symbol("@inbounds")), nothing, copy(loop.args[2]))
+    fastmath = Expr(:macrocall, GlobalRef(Base, Symbol("@fastmath")), nothing, copy(loop.args[2]))
+    body = Expr(:macrocall, GlobalRef(Base, Symbol("@inbounds")), nothing, fastmath)
     return Expr(:for, copy(loop.args[1]), body)
 end
 

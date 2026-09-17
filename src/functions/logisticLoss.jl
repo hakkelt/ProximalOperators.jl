@@ -98,17 +98,44 @@ function prox!(z, f::LogisticLoss, x, gamma)
     R = eltype(x)
     c = R(1) / gamma # convexity modulus
     L = f.mu * maximum(abs, f.y) + c # Lipschitz constant (f.mu > 0)
+    fy, mu = f.y, f.mu
+    z .= x
+    strategy = execution_strategy(f, x)
+    if is_cpu_storage(x)
+        # Written as an inline `@transcendental_loop` rather than the three-array broadcast
+        # below: on device storage the broadcast is the right shape (fused, no scalar
+        # indexing), but on the host it neither threads nor vectorises through
+        # LoopVectorization, since `Base.broadcast` doesn't route through this package's
+        # execution strategy at all. The loop below is otherwise the same iteration.
+        #
+        # `check_input`, not `get_buffers`: this path needs no scratch array, and calling
+        # `get_buffers` anyway would allocate one on every call for a non-preallocated `f`
+        # (see its docstring) for no reason. `check_input` keeps the mismatch check without
+        # that cost.
+        check_input(f, x)
+        for _ in 1:20
+            @transcendental_loop strategy for k in eachindex(x, z)
+                e = exp(fy[k] * z[k])
+                Fzk = z[k] - x[k] - (mu * gamma) * (fy[k] / (R(1) + e))
+                z[k] -= Fzk / L
+            end
+        end
+        val = R(0)
+        @transcendental_loop strategy reduction = ((+, val),) for k in eachindex(x, z)
+            e = exp(fy[k] * z[k])
+            val += log(R(1) + R(1) / e)
+        end
+        return f.mu * val
+    end
     b = get_buffers(f, x)
     expyz, Fz = b.expyz, b.Fz
-    z .= x
     for k = 1:20
-        expyz .= exp.(f.y .* z)
-        Fz .= z .- x .- (f.mu * gamma) .* (f.y ./ (1 .+ expyz))
+        expyz .= exp.(fy .* z)
+        Fz .= z .- x .- (mu * gamma) .* (fy ./ (1 .+ expyz))
         z .-= Fz ./ L
     end
-    expyz .= exp.(f.y .* z)
+    expyz .= exp.(fy .* z)
     val = R(0)
-    strategy = execution_strategy(f, x)
     @transcendental_loop strategy reduction = ((+, val),) for k in eachindex(expyz)
         val += log(R(1) + R(1)/expyz[k])
     end
