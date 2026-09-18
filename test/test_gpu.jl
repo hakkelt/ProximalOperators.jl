@@ -124,6 +124,38 @@ end
     end
 end
 
+# The sweep above calls `prox!` and nothing else, which is how a scalar-indexing
+# `gradient!` survived in `SqrNormL2` unnoticed: nothing on the device path ever asked a
+# smooth function for its gradient. Every function with a `gradient!` belongs here.
+gpu_gradient_cases() = Any[
+    ("SqrNormL2", SqrNormL2(0.7), randn(40)),
+    ("SqrNormL2 weighted", SqrNormL2(rand(40) .+ 0.1), randn(40)),
+    ("SqrNormL2 complex", SqrNormL2(0.7), randn(ComplexF64, 40)),
+    ("HuberLoss", HuberLoss(1.0, 1.0), randn(40)),
+    ("LogisticLoss", LogisticLoss(randn(40), 1.5), randn(40)),
+    ("SqrHingeLoss", SqrHingeLoss(sign.(randn(40))), randn(40)),
+    ("Linear", Linear(randn(40)), randn(40)),
+    ("LeastSquares", LeastSquares(randn(20, 30), randn(20)), randn(30)),
+    ("Quadratic", Quadratic((A = randn(30, 30); A'A + I), randn(30)), randn(30)),
+    ("Postcompose", Postcompose(SqrNormL2(0.4), 2.0), randn(25)),
+]
+
+@testset "gpu: gradients run on device arrays" begin
+    for (name, f, x) in gpu_gradient_cases()
+        @testset "$name" begin
+            xd = to_device(x)
+            gd, gh = similar(xd), similar(x)
+
+            vh = ProximalOperators.gradient!(gh, f, x)
+            vd = ProximalOperators.gradient!(gd, f, xd)
+
+            @test same(to_host(gd), gh)
+            @test same(vd, vh)
+            @test gd isa JLArray
+        end
+    end
+end
+
 @testset "gpu: bisection agrees with the exact CPU algorithms" begin
     # The selection operators gain a second algorithm on device storage -- threshold
     # bisection instead of Condat or `partialsortperm` -- so this is the one place where the
