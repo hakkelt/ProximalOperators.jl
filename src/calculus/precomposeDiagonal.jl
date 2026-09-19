@@ -107,3 +107,6 @@ function prox_naive(g::PrecomposeDiagonal, x, gamma)
     y, fy = prox_naive(g.f, z, (g.a .* g.a) .* gamma)
     return (y .- g.b)./g.a, fy
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:PrecomposeDiagonal{T}}) where T = device_tier(T)

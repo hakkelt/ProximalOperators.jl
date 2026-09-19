@@ -74,6 +74,11 @@ is_convex(f::Type{<:IndPSD}) = true
 is_cone_indicator(f::Type{<:IndPSD}) = true
 
 function prox!(Y::Union{Symmetric, Hermitian}, f::IndPSD, X::Union{Symmetric, Hermitian}, gamma)
+    # Falls back to the host when the storage has no device factorization. The question is
+    # asked of the method table rather than of the array type: `svd!` exists for a `CuMatrix`
+    # and this then runs natively on the device, while a backend that has not implemented it
+    # is served correctly by a round-trip instead of failing.
+    runs_natively(eigen!, X) || return host_prox!(Y, f, X, gamma)
     R = real(eltype(X))
     n = size(X, 1)
     b = get_buffers(f, X)
@@ -210,6 +215,11 @@ function (f::IndPSD)(X::AbstractMatrix{R}) where R <: Real
 end
     
 function prox!(y::AbstractMatrix{R}, f::IndPSD, x::AbstractMatrix{R}, gamma) where R <: Real
+    # Falls back to the host when the storage has no device factorization. The question is
+    # asked of the method table rather than of the array type: `svd!` exists for a `CuMatrix`
+    # and this then runs natively on the device, while a backend that has not implemented it
+    # is served correctly by a round-trip instead of failing.
+    runs_natively(eigen!, x) || return host_prox!(y, f, x, gamma)
     prox!(Symmetric(y), f, Symmetric(x), gamma)
 end
 
@@ -222,9 +232,17 @@ function (f::IndPSD)(X::AbstractMatrix{C}) where C <: Complex
 end
     
 function prox!(y::AbstractMatrix{C}, f::IndPSD, x::AbstractMatrix{C}, gamma) where C <: Complex
+    # Falls back to the host when the storage has no device factorization. The question is
+    # asked of the method table rather than of the array type: `svd!` exists for a `CuMatrix`
+    # and this then runs natively on the device, while a backend that has not implemented it
+    # is served correctly by a round-trip instead of failing.
+    runs_natively(eigen!, x) || return host_prox!(y, f, x, gamma)
     prox!(Hermitian(y), f, Hermitian(x), gamma)
 end
 
 function prox_naive(f::IndPSD, X::AbstractMatrix{C}, gamma) where C <: Complex
     prox_naive(f, Hermitian(X), gamma)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:IndPSD}) = :device_lapack

@@ -74,3 +74,6 @@ function prox_naive(g::Conjugate, x, gamma)
 end
 
 # TODO: hard-code conjugation rules? E.g. precompose/epicompose
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Conjugate{T}}) where T = device_tier(T)
