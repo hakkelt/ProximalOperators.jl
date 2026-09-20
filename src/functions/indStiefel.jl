@@ -35,6 +35,11 @@ function (::IndStiefel)(X)
 end
 
 function prox!(Y, f::IndStiefel, X, gamma)
+    # Falls back to the host when the storage has no device factorization. The question is
+    # asked of the method table rather than of the array type: `svd!` exists for a `CuMatrix`
+    # and this then runs natively on the device, while a backend that has not implemented it
+    # is served correctly by a round-trip instead of failing.
+    runs_natively(svd!, X) || return host_prox!(Y, f, X, gamma)
     R = real(eltype(X))
     n, p = size(X)
     b = get_buffers(f, X)
@@ -52,3 +57,6 @@ function prox_naive(::IndStiefel, X, gamma)
     Y = F.U[:, 1:p] * F.Vt
     return Y, R(0)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:IndStiefel}) = :device_lapack

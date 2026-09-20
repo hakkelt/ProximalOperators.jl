@@ -61,3 +61,6 @@ function prox_naive(f::ReshapeInput, x, gamma)
     end
     return prox_naive(f.f, x, gamma)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:ReshapeInput{T}}) where T = device_tier(T)

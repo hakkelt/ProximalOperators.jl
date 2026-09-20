@@ -82,3 +82,6 @@ function prox_naive(g::Regularize, x, gamma)
     y, v = prox_naive(g.f, x./(R(1) .+ gamma.*g.rho) .+ g.a./(R(1)./(gamma.*g.rho) .+ R(1)), gamma./(R(1) .+ gamma.*g.rho))
     return y, v + g.rho/R(2)*norm(y .- g.a)^2
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Regularize{T}}) where T = device_tier(T)

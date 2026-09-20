@@ -63,3 +63,6 @@ function prox_naive(g::Translate, x, gamma)
     y, v = prox_naive(g.f, x .+ g.b, gamma)
     return y - g.b, v
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Translate{T}}) where T = device_tier(T)
