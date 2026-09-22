@@ -30,6 +30,7 @@ export prox, prox!, gradient, gradient!
 
 # Utilities
 
+include("utilities/preallocation.jl")
 include("utilities/approx_inequality.jl")
 include("utilities/linops.jl")
 include("utilities/symmetricpacked.jl")

@@ -39,6 +39,9 @@ Postcompose(f::T, a::R=1, b::S=0) where {T, R <: Real, S <: Real} = Postcompose{
 
 Postcompose(f::Postcompose{T, R, S}, a::R=1, b::S=0) where {T, R <: Real, S <: Real} = Postcompose{T, R, S}(f.f, a * f.a, b + a * f.b)
 
+# no scratch space of its own: only the inner function needs preallocating
+preallocate(g::Postcompose, x) = Postcompose(preallocate(g.f, x), g.a, g.b)
+
 function (g::Postcompose)(x)
     return g.a * g.f(x) + g.b
 end

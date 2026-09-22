@@ -29,6 +29,9 @@ SeparableSum(fs::Vararg) = SeparableSum((fs...,))
 
 component_types(::Type{SeparableSum{T}}) where T = fieldtypes(T)
 
+# no scratch space of its own: each block is proxed in place
+preallocate(g::SeparableSum, xs::Tuple) = SeparableSum(map(preallocate, g.fs, xs))
+
 @generated is_proximable(::Type{T}) where T <: SeparableSum = return all(is_proximable, component_types(T)) ? true : false
 @generated is_convex(::Type{T}) where T <: SeparableSum = return all(is_convex, component_types(T)) ? true : false
 @generated is_set_indicator(::Type{T}) where T <: SeparableSum = return all(is_set_indicator, component_types(T)) ? true : false

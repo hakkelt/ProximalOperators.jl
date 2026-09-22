@@ -79,6 +79,15 @@ end
 
 component_types(::Type{SlicedSeparableSum{S, T, N}}) where {S, T, N} = Tuple(A.parameters[1] for A in fieldtypes(S))
 
+# no scratch space of its own: slices are proxed in place through views, so
+# only the component functions need preallocating, each for its own slice
+function preallocate(f::SlicedSeparableSum{S, T, N}, x) where {S, T, N}
+    fs = map(f.fs, (f.idxs...,)) do fs_group, idxs_group
+        [preallocate(fi, view(x, idx...)) for (fi, idx) in zip(fs_group, idxs_group)]
+    end
+    return SlicedSeparableSum{typeof(fs), T, N}(fs, f.idxs)
+end
+
 @generated is_proximable(::Type{T}) where T <: SlicedSeparableSum = return all(is_proximable, component_types(T)) ? :(true) : :(false)
 @generated is_convex(::Type{T}) where T <: SlicedSeparableSum = return all(is_convex, component_types(T)) ? :(true) : :(false)
 @generated is_set_indicator(::Type{T}) where T <: SlicedSeparableSum = return all(is_set_indicator, component_types(T)) ? :(true) : :(false)

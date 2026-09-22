@@ -12,9 +12,18 @@ S_{n,p} = \left\{ X \in \mathbb{F}^{n \times p} : X^*X = I \right\}.
 where ``\mathbb{F}`` is the real or complex field, and parameters ``n`` and ``p``
 are inferred from the matrix provided as input.
 """
-struct IndStiefel end
+struct IndStiefel{B}
+    buf::B
+end
+
+IndStiefel() = IndStiefel{Nothing}(nothing)
 
 is_set_indicator(f::Type{<:IndStiefel}) = true
+
+# `svd` copies its argument internally; `svd!` on an owned copy saves that copy.
+preallocate(f::IndStiefel, X::AbstractMatrix) = IndStiefel(
+    (sig = input_signature(X), X_copy = similar(X))
+)
 
 function (::IndStiefel)(X)
     R = real(eltype(X))
@@ -25,10 +34,12 @@ function (::IndStiefel)(X)
     return R(Inf)
 end
 
-function prox!(Y, ::IndStiefel, X, gamma)
+function prox!(Y, f::IndStiefel, X, gamma)
     R = real(eltype(X))
     n, p = size(X)
-    F = svd(X)
+    b = get_buffers(f, X)
+    b.X_copy .= X
+    F = svd!(b.X_copy)
     U_sliced = view(F.U, :, 1:p)
     mul!(Y, U_sliced, F.Vt)
     return R(0)
