@@ -26,6 +26,7 @@ struct DistL2{R, T}
 end
 
 is_proximable(::Type{DistL2{R, T}}) where {R, T} = is_proximable(T)
+is_locally_smooth(::Type{DistL2{R, T}}) where {R, T} = is_proximable(T)
 is_convex(::Type{DistL2{R, T}}) where {R, T} = is_convex(T)
 
 DistL2(ind::T, lambda::R=1) where {R, T} = DistL2{R, T}(ind, lambda)
@@ -72,3 +73,6 @@ function prox_naive(f::DistL2, x, gamma)
     end
     return p, R(0)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:DistL2{<:Any, T}}) where T = device_tier(T)

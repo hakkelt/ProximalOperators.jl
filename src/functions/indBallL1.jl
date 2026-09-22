@@ -25,12 +25,12 @@ end
 
 is_convex(f::Type{<:IndBallL1}) = true
 is_set_indicator(f::Type{<:IndBallL1}) = true
-is_proximable(f::Type{<:IndBallL1}) = false
 
 IndBallL1(r::R=1.0; buf=nothing) where R = IndBallL1{R, typeof(buf)}(r, buf)
 IndBallL1{R}(r::R) where R = IndBallL1{R, Nothing}(r, nothing)
 
 function preallocate(f::IndBallL1, x::AbstractArray{<:Real})
+    is_cpu_storage(typeof(x)) || return IndBallL1(f.r; buf = (sig = input_signature(x),))
     abs_x = similar(x)
     return IndBallL1(f.r; buf = (
         sig = input_signature(x),
@@ -41,6 +41,7 @@ end
 
 function preallocate(f::IndBallL1, x::AbstractArray{<:Complex})
     R = real(eltype(x))
+    is_cpu_storage(typeof(x)) || return IndBallL1(f.r; buf = (sig = input_signature(x),))
     abs_x = similar(x, R)
     return IndBallL1(f.r; buf = (
         sig = input_signature(x),
@@ -58,20 +59,29 @@ function (f::IndBallL1)(x)
     return R(0)
 end
 
+# Two algorithms for one projection, chosen by storage, exactly as in `indSimplex.jl`: the
+# Condat path projects `abs.(x)` onto the simplex and puts the signs back, and needs a
+# scratch array plus Condat's stacks; the bisection path solves `Σ max(|xᵢ| - τ, 0) = r`
+# directly out of reductions and writes the answer in one broadcast, needing no scratch and
+# no scalar indexing.
 function prox!(y, f::IndBallL1, x::AbstractArray{<:Real}, gamma)
     R = eltype(x)
     check_input(f, x)
     if norm(x, 1) <= f.r
         y .= x
         return R(0)
-    else # do a projection of abs(x) onto simplex then recover signs
+    end
+    if is_cpu_storage(typeof(x))
         b = get_buffers(f, x)
         w = condat_work(f, x)
         b.abs_x .= abs.(x)
         simplex_proj_condat!(y, f.r, b.abs_x, w.v, w.v_tilde)
         y .*= sign.(x)
-        return R(0)
+    else
+        tau = l1_ball_threshold(x, f.r, R)
+        y .= sign.(x) .* max.(abs.(x) .- tau, zero(R))
     end
+    return R(0)
 end
 
 function prox!(y, f::IndBallL1, x::AbstractArray{<:Complex}, gamma)
@@ -80,14 +90,18 @@ function prox!(y, f::IndBallL1, x::AbstractArray{<:Complex}, gamma)
     if norm(x, 1) <= f.r
         y .= x
         return R(0)
-    else # do a projection of abs(x) onto simplex then recover signs
+    end
+    if is_cpu_storage(typeof(x))
         b = get_buffers(f, x)
         w = condat_work(f, x)
         b.abs_x .= real.(abs.(x))
         simplex_proj_condat!(b.y_temp, f.r, b.abs_x, w.v, w.v_tilde)
         y .= b.y_temp .* sign.(x)
-        return R(0)
+    else
+        tau = l1_ball_threshold(x, f.r, R)
+        y .= sign.(x) .* max.(abs.(x) .- tau, zero(R))
     end
+    return R(0)
 end
 
 function prox_naive(f::IndBallL1, x, gamma)

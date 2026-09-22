@@ -40,11 +40,17 @@ function preallocate(f::NuclearNorm, X::AbstractMatrix)
 end
 
 function (f::NuclearNorm)(X)
+    runs_natively(svd!, X) || return host_call(f, X)
     F = svd(X)
     return f.lambda * sum(F.S)
 end
 
 function prox!(Y, f::NuclearNorm, X, gamma)
+    # Falls back to the host when the storage has no device factorization. The question is
+    # asked of the method table rather than of the array type: `svd!` exists for a `CuMatrix`
+    # and this then runs natively on the device, while a backend that has not implemented it
+    # is served correctly by a round-trip instead of failing.
+    runs_natively(svd!, X) || return host_prox!(Y, f, X, gamma)
     R = real(eltype(X))
     b = get_buffers(f, X)
     b.X_copy .= X
@@ -70,3 +76,6 @@ function prox_naive(f::NuclearNorm, X, gamma)
     Y = F.U * (Diagonal(S) * F.Vt)
     return Y, f.lambda * sum(S)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:NuclearNorm}) = :device_lapack

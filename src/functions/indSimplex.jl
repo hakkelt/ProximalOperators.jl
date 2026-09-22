@@ -30,13 +30,23 @@ is_set_indicator(f::Type{<:IndSimplex}) = true
 IndSimplex(a::R=1; buf=nothing) where R = IndSimplex{R, typeof(buf)}(a, buf)
 IndSimplex{R}(a::R) where R = IndSimplex{R, Nothing}(a, nothing)
 
-preallocate(f::IndSimplex, x::AbstractArray{<:Real}) = IndSimplex(
-    f.a; buf = (sig = input_signature(x), condat_buffers(x)...)
-)
+# Condat's stacks are only built for storage that will actually run Condat; the bisection
+# path needs no scratch at all, just the signature to check inputs against. `is_cpu_storage`
+# answers from the type alone, so the branch folds away and each input type still gets a
+# concretely typed operator back.
+function preallocate(f::IndSimplex, x::AbstractArray{<:Real})
+    if is_cpu_storage(typeof(x))
+        return IndSimplex(f.a; buf = (sig = input_signature(x), condat_buffers(x)...))
+    else
+        return IndSimplex(f.a; buf = (sig = input_signature(x),))
+    end
+end
 
 function (f::IndSimplex)(x)
     R = eltype(x)
-    if all(x .>= 0) && sum(x) ≈ f.a
+    # `minimum` rather than `all(x .>= 0)`: one reduction instead of a temporary, and it
+    # runs on any storage
+    if minimum(x) >= 0 && sum(x) ≈ f.a
         return R(0)
     end
     return R(Inf)
@@ -115,9 +125,20 @@ function simplex_proj_condat!(y, a, x, v, v_tilde)
     y .= max.(x .- rho, R(0))
 end
 
+# Condat's algorithm walks the input one element at a time through two `Vector` stacks, so
+# it needs storage the package can index scalar-wise and push to. Anything else -- a device
+# array, or any array type whose storage the package does not recognise -- takes the
+# bisection path of `src/utilities/bisection.jl`, which is built entirely from reductions
+# and broadcasts and so runs anywhere. Both compute the same projection; Condat is exact and
+# single-pass, which is why it stays the default where it can run at all.
 function prox!(y, f::IndSimplex, x, gamma)
-    b = condat_work(f, x)
-    simplex_proj_condat!(y, f.a, x, b.v, b.v_tilde)
+    if is_cpu_storage(x)
+        b = condat_work(f, x)
+        simplex_proj_condat!(y, f.a, x, b.v, b.v_tilde)
+    else
+        check_input(f, x)
+        simplex_proj_bisect!(y, f.a, x)
+    end
     return eltype(x)(0)
 end
 

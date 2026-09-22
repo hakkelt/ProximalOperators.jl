@@ -58,7 +58,10 @@ Precompose{T, M, U, V}(f::T, L::M, mu::U, b::V) where {T, M, U, V} =
 Precompose(f::T, L::M, mu::U) where {T, M, U} = Precompose(f, L, mu, 0)
 
 function preallocate(g::Precompose, x)
-    res = g.L * x .+ g.b
+    res = g.L * x
+    if g.b != 0
+        res = res .+ g.b
+    end
     return Precompose(
         preallocate(g.f, res), g.L, g.mu, g.b;
         buf = (sig = input_signature(x), res = res, out = similar(res)),
@@ -69,19 +72,26 @@ function (g::Precompose)(x)
     return g.f(g.L * x .+ g.b)
 end
 
-# Returns the buffers with `res` already set to `L*x + b`. Unlike the generic
-# `get_buffers`, this avoids recomputing `L*x` on the non-preallocated path.
+# Returns the buffers with `res` already set to `L*x` (`+ b` when `b != 0`). Unlike the
+# generic `get_buffers`, this avoids recomputing `L*x` on the non-preallocated path, and
+# keeps the zero-`b` case free of the translation add the un-preallocated path already
+# skipped.
 @inline precompose_buffers(g::Precompose, x) = _precompose_buffers(g, g.buf, x)
 
 @inline function _precompose_buffers(g::Precompose, ::Nothing, x)
-    res = g.L * x .+ g.b
+    res = g.L * x
+    if g.b != 0
+        res = res .+ g.b
+    end
     return (sig = nothing, res = res, out = similar(res))
 end
 
 @inline function _precompose_buffers(g::Precompose, buf, x)
     check_signature(buf.sig, x, g)
     mul!(buf.res, g.L, x)
-    buf.res .+= g.b
+    if g.b != 0
+        buf.res .+= g.b
+    end
     return buf
 end
 
@@ -96,7 +106,7 @@ function prox!(y, g::Precompose, x, gamma)
     # See Prop. 24.14 in Bauschke, Combettes
     # "Convex Analysis and Monotone Operator Theory in Hilbert Spaces",
     # 2nd ed., 2016.
-    # 
+    #
     # The same result is Prop. 23.32 in the 1st ed. of the same book.
     #
     # This case has an additional translation: if f(x) = h(x + b) then
@@ -118,3 +128,6 @@ function prox_naive(g::Precompose, x, gamma)
     y = x + g.L'*((proxres .- res)./g.mu)
     return y, v
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{<:Precompose{T}}) where T = device_tier(T)

@@ -60,3 +60,6 @@ function prox_naive(g::PointwiseMinimum, x, gamma)
     y = proxes[i_min][1]
     return y, minimum(f(y) for f in g.fs)
 end
+
+# see `device_tier` in src/utilities/hostfallback.jl
+device_tier(::Type{T}) where T <: PointwiseMinimum = _combine_tiers(map(device_tier, component_types(T))...)
