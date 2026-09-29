@@ -123,6 +123,7 @@ end
 
 @testset "Utilities" begin
     include("test_symmetricpacked.jl")
+    include("test_mixed_precision.jl")
 end
 
 @testset "Functions" begin
