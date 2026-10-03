@@ -127,9 +127,9 @@ end
 end
 
 @testset "Functions" begin
+    include("test_sqrNormL2.jl")
     include("test_cubeNormL2.jl")
     include("test_huberLoss.jl")
-    include("test_sqrNormL2.jl")
     include("test_indAffine.jl")
     include("test_leastSquares.jl")
     include("test_logisticLoss.jl")
