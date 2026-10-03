@@ -25,6 +25,7 @@ RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
 
 [extensions]
 GpuExt = ["GPUArrays", "KernelAbstractions"]
+GpuRecursiveArrayToolsExt = ["GPUArrays", "RecursiveArrayTools"]
 ProximalOperatorsCUDAExt = ["CUDA", "GPUArrays", "KernelAbstractions"]
 ProximalOperatorsOSQPExt = "OSQP"
 RecursiveArrayToolsExt = "RecursiveArrayTools"
