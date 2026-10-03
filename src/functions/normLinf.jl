@@ -16,7 +16,7 @@ NormLinf(lambda::T=1) where T = Conjugate(IndBallL1(lambda))
 (f::Conjugate{<:IndBallL1})(x) = (f.f.r) * norm(x, Inf)
 
 function gradient!(y, f::Conjugate{<:IndBallL1}, x)
-    absxi, i = findmax(abs.(x)) # Largest absolute value
+    absxi, i = findmax(abs, x) # Largest absolute value
     y .= 0
     y[i] = f.f.r * sign(x[i])
     return f.f.r * absxi
