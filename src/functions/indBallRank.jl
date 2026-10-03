@@ -27,7 +27,7 @@ struct IndBallRank{I, B}
 end
 
 is_set_indicator(f::Type{<:IndBallRank}) = true
-is_proximable(f::Type{<:IndBallRank}) = false
+is_proximable(f::Type{<:IndBallRank}) = true
 
 IndBallRank(r::I = 1; buf = nothing) where {I} = IndBallRank{I, typeof(buf)}(r, buf)
 IndBallRank{I}(r::I) where {I} = IndBallRank{I, Nothing}(r, nothing)
