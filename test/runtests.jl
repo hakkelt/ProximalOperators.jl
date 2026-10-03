@@ -123,9 +123,11 @@ end
 
 @testset "Utilities" begin
     include("test_symmetricpacked.jl")
+    include("test_mixed_precision.jl")
 end
 
 @testset "Functions" begin
+    include("test_sqrNormL2.jl")
     include("test_cubeNormL2.jl")
     include("test_huberLoss.jl")
     include("test_indAffine.jl")
