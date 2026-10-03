@@ -259,3 +259,15 @@ end
     @test device_tier(SeparableSum(NormL1(1.0), NormL2(1.0))) === :native
     @test device_tier(IndExpDual()) === :host
 end
+
+using RecursiveArrayTools: ArrayPartition
+
+@testset "gpu: inner products and updates of a device ArrayPartition" begin
+    xh = ArrayPartition(randn(Float32, 5), randn(ComplexF32, 3, 2))
+    yh = ArrayPartition(randn(Float32, 5), randn(ComplexF32, 3, 2))
+    x, y = ArrayPartition(map(JLArray, xh.x)...), ArrayPartition(map(JLArray, yh.x)...)
+    @test dot(x, y) ≈ dot(xh, yh)
+    @test norm(x) ≈ norm(xh)
+    @test all(Array.(axpy!(2.0f0, x, copy(y)).x) .≈ collect(axpy!(2.0f0, xh, copy(yh)).x))
+    @test all(Array.(axpby!(2.0f0, x, 0.5f0, copy(y)).x) .≈ collect(axpby!(2.0f0, xh, 0.5f0, copy(yh)).x))
+end
