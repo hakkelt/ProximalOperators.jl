@@ -71,7 +71,8 @@ function _call_slices(strategy::Strategy, fs, idxs, x)
     v = 0.0
     @elementwise_loop strategy reduction = ((+, v),) minbatch = 1 for k in eachindex(fs)
         fk = strategy isa Batch ? unthreaded(fs[k]) : fs[k]
-        v += fk(view(x, idxs[k]...))
+        idx = idxs[k]
+        v += fk(idx isa Tuple ? view(x, idx...) : view(x, idx))
     end
     return v
 end
@@ -80,7 +81,12 @@ function _prox_slices!(strategy::Strategy, y, fs, idxs, x, gamma)
     v = 0.0
     @elementwise_loop strategy reduction = ((+, v),) minbatch = 1 for k in eachindex(fs)
         fk = strategy isa Batch ? unthreaded(fs[k]) : fs[k]
-        v += prox!(view(y, idxs[k]...), fk, view(x, idxs[k]...), gamma)
+        idx = idxs[k]
+        v += if idx isa Tuple
+            prox!(view(y, idx...), fk, view(x, idx...), gamma)
+        else
+            prox!(view(y, idx), fk, view(x, idx), gamma)
+        end
     end
     return v
 end
@@ -124,7 +130,8 @@ component_types(::Type{<:SlicedSeparableSum{S}}) where {S} = Tuple(A.parameters[
 # only the component functions need preallocating, each for its own slice
 function preallocate(f::SlicedSeparableSum{S, T, N, Th}, x) where {S, T, N, Th}
     fs = map(f.fs, (f.idxs...,)) do fs_group, idxs_group
-        [preallocate(fi, view(x, idx...)) for (fi, idx) in zip(fs_group, idxs_group)]
+        [preallocate(fi, idx isa Tuple ? view(x, idx...) : view(x, idx))
+         for (fi, idx) in zip(fs_group, idxs_group)]
     end
     return SlicedSeparableSum{typeof(fs), T, N, Th}(fs, f.idxs)
 end
@@ -141,7 +148,7 @@ end
 @generated is_strongly_convex(::Type{T}) where T <: SlicedSeparableSum = return all(is_strongly_convex, component_types(T)) ? :(true) : :(false)
 
 function prox_naive(f::SlicedSeparableSum, x, gamma)
-    fy = 0
+    fy = zero(eltype(x))
     y = similar(x)
     for t in eachindex(f.fs)
         for k in eachindex(f.fs[t])
