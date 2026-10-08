@@ -165,6 +165,18 @@ end
     include("test_equivalences.jl")
 end
 
+@testset "Preallocation" begin
+    include("test_preallocate.jl")
+end
+
+@testset "Threading" begin
+    include("test_threading.jl")
+end
+
+@testset "GPU" begin
+    include("test_gpu.jl")
+end
+
 include("test_optimality_conditions.jl")
 
 @testset "Hardcoded" begin
