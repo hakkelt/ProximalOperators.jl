@@ -123,9 +123,11 @@ end
 
 @testset "Utilities" begin
     include("test_symmetricpacked.jl")
+    include("test_mixed_precision.jl")
 end
 
 @testset "Functions" begin
+    include("test_sqrNormL2.jl")
     include("test_cubeNormL2.jl")
     include("test_huberLoss.jl")
     include("test_indAffine.jl")
@@ -167,6 +169,14 @@ end
 
 @testset "Preallocation" begin
     include("test_preallocate.jl")
+end
+
+@testset "Threading" begin
+    include("test_threading.jl")
+end
+
+@testset "GPU" begin
+    include("test_gpu.jl")
 end
 
 include("test_optimality_conditions.jl")
