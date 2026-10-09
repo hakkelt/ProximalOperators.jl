@@ -82,6 +82,7 @@ gpu_cases() = begin
         ("IndStiefel",         IndStiefel(),                     randn(20, 5), 1.0),
         ("IndBallRank",        IndBallRank(3),                   randn(15, 10), 1.0),
         ("NuclearNorm",        NuclearNorm(0.3),                 randn(20, 12), 0.7),
+        ("BatchedNuclearNorm", BatchedNuclearNorm(0.3),          randn(12, 5, 4), 0.7),
         ("IndAffine",          IndAffine(Matrix(Q), randn(15)),  randn(30), 0.7),
         ("IndGraph",           IndGraph(randn(10, 20)),          (randn(20), randn(10)), 0.7),
         ("LeastSquares",       LeastSquares(randn(20, 30), randn(20)), randn(30), 0.7),
