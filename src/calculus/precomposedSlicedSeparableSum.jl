@@ -87,30 +87,52 @@ function slice_var(x, idx)
         return view(x, idx...)
     elseif idx isa Colon
         return x
+    elseif idx isa Nothing
+        return similar(x)
     else
         return view(x, idx)
     end
 end
 
+# A term's operator acting on the slices of every variable. It is either one operator taking the
+# tuple of slices (a block row such as `AbstractOperators.HCAT`), or a tuple of one operator per
+# variable, `nothing` where the term does not involve that variable, whose blocks are summed.
+_ops_mul(ops, x::Tuple) = ops * x
+function _ops_mul(ops::Tuple, x::Tuple)
+    res = nothing
+    for (op, xi) in zip(ops, x)
+        op === nothing && continue
+        res = res === nothing ? op * xi : (res .+= op * xi)
+    end
+    return res
+end
+
+_ops_adjoint_mul!(y::Tuple, ops, r) = mul!(y, adjoint(ops), r)
+function _ops_adjoint_mul!(y::Tuple, ops::Tuple, r)
+    for (yi, op) in zip(y, ops)
+        op === nothing ? fill!(yi, 0) : mul!(yi, adjoint(op), r)
+    end
+    return y
+end
+
 # Unroll the loop over the different types of functions to prox on
 function prox!(y::Tuple, f::PrecomposedSlicedSeparableSum, x::Tuple, gamma)
     v = zero(eltype(x[1]))
+    counter = 1
     for (fs_group, idxs_group, ops_group, μ_group) = zip(f.fs, f.idxs, f.ops, f.μs) # For each function type
         for (fun, idx_group, hcat_op, μ) in zip(fs_group, idxs_group, ops_group, μ_group) # For each function of that type
-            for (idx, op, x_var, y_var) in zip(idx_group, hcat_op, x, y)
-                if idx isa Nothing
-                    continue
-                end
-                sliced_x = slice_var(x_var, idx)
-                sliced_y = slice_var(y_var, idx)
-                res = op * sliced_x
-                prox_res, g = prox(fun, res, μ.*gamma)
-                prox_res .-= res
-                prox_res ./= μ
-                mul!(sliced_y, adjoint(op), prox_res)
-                sliced_y .+= sliced_x
-                v += g
+            sliced_x = Tuple(slice_var(x_var, idx) for (x_var, idx) in zip(x, idx_group))
+            sliced_y = Tuple(slice_var(y_var, idx) for (y_var, idx) in zip(y, idx_group))
+            res = _ops_mul(hcat_op, sliced_x)
+            prox_res, g = prox(fun, res, μ.*gamma)
+            prox_res .-= res
+            prox_res ./= μ
+            _ops_adjoint_mul!(sliced_y, hcat_op, prox_res)
+            for i in eachindex(sliced_x)
+                sliced_y[i] .+= sliced_x[i]
             end
+            v += g
+            counter += 1
         end
     end
     return v
@@ -133,18 +155,15 @@ function prox_naive(f::PrecomposedSlicedSeparableSum, x, gamma)
     y = similar.(x)
     for (fs_group, idxs_group, ops_group, μ_group) = zip(f.fs, f.idxs, f.ops, f.μs) # For each function type
         for (fun, idx_group, hcat_op, μ) in zip(fs_group, idxs_group, ops_group, μ_group) # For each function of that type
-            for (idx, op, x_var, y_var) in zip(idx_group, hcat_op, x, y)
-                if idx isa Nothing
-                    continue
-                end
-                sliced_x = slice_var(x_var, idx)
-                sliced_y = slice_var(y_var, idx)
-                res = op * sliced_x
-                prox_res, _fy = prox_naive(fun, res, μ.*gamma)
-                prox_res = (prox_res .- res) ./ μ
-                mul!(sliced_y, adjoint(op), prox_res)
-                fy += _fy
-                sliced_y .+= sliced_x
+            sliced_x = Tuple(slice_var(x_var, idx) for (x_var, idx) in zip(x, idx_group))
+            sliced_y = Tuple(slice_var(y_var, idx) for (y_var, idx) in zip(y, idx_group))
+            res = _ops_mul(hcat_op, sliced_x)
+            prox_res, _fy = prox_naive(fun, res, μ.*gamma)
+            prox_res = (prox_res .- res) ./ μ
+            _ops_adjoint_mul!(sliced_y, hcat_op, prox_res)
+            fy += _fy
+            for i in eachindex(sliced_x)
+                sliced_y[i] .+= sliced_x[i]
             end
         end
     end
