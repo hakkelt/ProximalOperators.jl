@@ -52,11 +52,15 @@ function prox!(y, f::IndBallL0, x, gamma)
     T = eltype(x)
     if is_cpu_storage(typeof(x))
         p = _get_top_k_abs_indices(x, f.r)
+        # The surviving entries are read out before `y` is cleared, so that `prox!(x, f, x, gamma)` (an in-place
+        # step, which callers are allowed to take) does not zero them out before they are copied.
+        kept = [x[i] for i in p]
         y .= T(0)
         for i in eachindex(p)
-            y[p[i]] = x[p[i]]
+            y[p[i]] = kept[i]
         end
     else
+        # The broadcast reads `x` and writes `y` elementwise, so it is in-place safe as it stands.
         tau = kth_largest_abs(x, f.r, real(T))
         y .= ifelse.(abs.(x) .> tau, x, zero(T))
     end
