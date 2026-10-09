@@ -61,6 +61,8 @@ gpu_cases() = begin
         ("IndBallLinf",        IndBallLinf(1.0),                 randn(40), 0.7),
         ("IndNonnegative",     IndNonnegative(),                 randn(40), 0.7),
         ("IndNonpositive",     IndNonpositive(),                 randn(40), 0.7),
+        ("IndRealBox",         IndRealBox(-0.5, 0.5),            randn(ComplexF64, 40), 0.7),
+        ("IndRealNonnegative", IndRealNonnegative(),             randn(ComplexF64, 40), 0.7),
         ("IndZero",            IndZero(),                        randn(40), 0.7),
         ("IndFree",            IndFree(),                        randn(40), 0.7),
         ("IndBinary",          IndBinary(0.0, 1.0),              randn(40), 0.7),
