@@ -25,7 +25,6 @@ end
 
 is_convex(f::Type{<:IndBallL1}) = true
 is_set_indicator(f::Type{<:IndBallL1}) = true
-is_proximable(f::Type{<:IndBallL1}) = false
 
 IndBallL1(r::R=1.0; buf=nothing) where R = IndBallL1{R, typeof(buf)}(r, buf)
 IndBallL1{R}(r::R) where R = IndBallL1{R, Nothing}(r, nothing)
