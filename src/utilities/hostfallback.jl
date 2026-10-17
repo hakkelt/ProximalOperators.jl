@@ -13,8 +13,8 @@
 # at a cost that is visible and documented rather than hidden.
 #
 # What this deliberately does *not* do is convert the operator. Only the input and output
-# are moved. An operator carrying its own data -- `LeastSquares(A, b)`, `IndPolyhedral(...)`,
-# `IndAffine(A, b)` -- is expected to have been built from host arrays, which is the realistic
+# are moved. An operator carrying its own data -- `LeastSquares(A, b)`, `IndAffine(A, b)` --
+# is expected to have been built from host arrays, which is the realistic
 # case for exactly the operators that end up here; its factorization is computed once at
 # construction and would be destroyed by moving it per call.
 
@@ -32,7 +32,7 @@ function host_prox!(y, f, x, gamma)
     warn_host_roundtrip(typeof(f))
     xh = host_copy(x)
     yh = similar(xh)
-    v = prox!(yh, f, xh, gamma)
+    v = prox!(yh, host_operator(f, xh), xh, gamma)
     copyto!(y, yh)
     return v
 end
@@ -42,7 +42,7 @@ end
 
 Evaluate `f(x)` on the host. The call-operator counterpart of [`host_prox!`](@ref).
 """
-host_call(f, x) = (warn_host_roundtrip(typeof(f)); f(host_copy(x)))
+host_call(f, x) = (warn_host_roundtrip(typeof(f)); xh = host_copy(x); host_operator(f, xh)(xh))
 
 """
     host_gradient!(g, f, x)
@@ -53,10 +53,17 @@ function host_gradient!(g, f, x)
     warn_host_roundtrip(typeof(f))
     xh = host_copy(x)
     gh = similar(xh)
-    v = gradient!(gh, f, xh)
+    v = gradient!(gh, host_operator(f, xh), xh)
     copyto!(g, gh)
     return v
 end
+
+# A preallocated operator carries buffers for the input it was prepared for, and its input
+# signature records that input's array type, so the host copy -- an `Array` -- never matches
+# it: run on the host, a preallocated `f` would throw `DimensionMismatch` on its own
+# round-trip. The host side gets an operator preallocated for the host copy instead. That
+# allocates on every call, which is the price of a path that copies the input anyway.
+host_operator(f, xh) = is_preallocated(f) ? preallocate(f, xh) : f
 
 # `Array(x)` is the one conversion every array type supports, device or not.
 host_copy(x::AbstractArray) = Array(x)

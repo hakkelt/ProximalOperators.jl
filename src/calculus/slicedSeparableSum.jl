@@ -57,33 +57,62 @@ SlicedSeparableSum(Tuple(f for k in eachindex(idxs)), idxs; threaded)
 @threadable SlicedSeparableSum{<:Any, <:Any, <:Any, Th} BlockParallel
 
 # The per-type loops live in ordinary functions rather than inside the generated body: the
-# elements of one group all share a type, so the loop is type-stable and `@batch` can take
-# it, and keeping it out of the `@generated` expression keeps macro expansion predictable.
-# `minbatch = 1` stops Polyester from subdividing a single slice.
+# elements of one group all share a type, so the loop is type-stable, and keeping it out of
+# the `@generated` expression keeps macro expansion predictable.
 #
-# When the outer loop over slices threads, each slice's own function is proxed through
-# `unthreaded`: `Polyester`'s pool is claimed all-or-nothing, so a slice that still permits
-# threading would spend a `@batch` launch trying to claim a pool this loop already holds
-# (see `unthreaded` in `src/utilities/execution.jl`). When the outer loop stays serial there
-# is nothing to veto, so the slice keeps whatever permission it was built with.
+# The threaded branch spawns tasks over contiguous chunks of slices rather than running a
+# `Polyester.@batch` loop. `@batch` hands its body `StrideArraysCore.PtrArray`s in place of
+# the arrays it captures, so each slice would reach its function as a `PtrArray` rather
+# than the `SubArray` it was preallocated for: a preallocated child then fails its input
+# signature check, and one that falls back to the host on storage it does not recognise as
+# CPU memory (`NuclearNorm`, `IndBallRank`) leaves the device path for a host copy that
+# fails the same check. Tasks pass the views through unchanged. One task per chunk, not per
+# slice, keeps the spawn count at the thread count however many slices there are; the
+# region runs with the budget restricted, as `SeparableSum`'s does (see there).
+#
+# When the slices run threaded, each slice's own function is proxed through `unthreaded`:
+# `Polyester`'s pool is claimed all-or-nothing, so a slice that still permits threading
+# would spend a `@batch` launch trying to claim a pool this loop already holds (see
+# `unthreaded` in `src/utilities/execution.jl`). When the slices run serially there is
+# nothing to veto, so each keeps whatever permission it was built with.
 
-function _call_slices(strategy::Strategy, fs, idxs, x)
+_slice(x, idx::Tuple) = view(x, idx...)
+_slice(x, idx) = view(x, idx)
+
+function _sum_slices(g, strategy::Strategy, ks)
+    if strategy isa Batch
+        chunks = Iterators.partition(ks, cld(length(ks), Threads.nthreads()))
+        return NestedThreading.with_restricted_threads() do
+            tasks = map(chunks) do chunk
+                Threads.@spawn begin
+                    v = 0.0
+                    for k in chunk
+                        v += g(k, true)
+                    end
+                    v
+                end
+            end
+            sum(t -> fetch(t)::Float64, tasks; init = 0.0)
+        end
+    end
     v = 0.0
-    @elementwise_loop strategy reduction = ((+, v),) minbatch = 1 for k in eachindex(fs)
-        fk = strategy isa Batch ? unthreaded(fs[k]) : fs[k]
-        v += fk(view(x, idxs[k]...))
+    for k in ks
+        v += g(k, false)
     end
     return v
 end
 
-function _prox_slices!(strategy::Strategy, y, fs, idxs, x, gamma)
-    v = 0.0
-    @elementwise_loop strategy reduction = ((+, v),) minbatch = 1 for k in eachindex(fs)
-        fk = strategy isa Batch ? unthreaded(fs[k]) : fs[k]
-        v += prox!(view(y, idxs[k]...), fk, view(x, idxs[k]...), gamma)
+_call_slices(strategy::Strategy, fs, idxs, x) =
+    _sum_slices(strategy, eachindex(fs)) do k, threaded
+        fk = threaded ? unthreaded(fs[k]) : fs[k]
+        fk(_slice(x, idxs[k]))
     end
-    return v
-end
+
+_prox_slices!(strategy::Strategy, y, fs, idxs, x, gamma) =
+    _sum_slices(strategy, eachindex(fs)) do k, threaded
+        fk = threaded ? unthreaded(fs[k]) : fs[k]
+        prox!(_slice(y, idxs[k]), fk, _slice(x, idxs[k]), gamma)
+    end
 
 # how many slices there are in total, known from the type alone for the block-count test
 nslices(f::SlicedSeparableSum) = sum(length, f.fs)
@@ -124,7 +153,8 @@ component_types(::Type{<:SlicedSeparableSum{S}}) where {S} = Tuple(A.parameters[
 # only the component functions need preallocating, each for its own slice
 function preallocate(f::SlicedSeparableSum{S, T, N, Th}, x) where {S, T, N, Th}
     fs = map(f.fs, (f.idxs...,)) do fs_group, idxs_group
-        [preallocate(fi, view(x, idx...)) for (fi, idx) in zip(fs_group, idxs_group)]
+        [preallocate(fi, idx isa Tuple ? view(x, idx...) : view(x, idx))
+         for (fi, idx) in zip(fs_group, idxs_group)]
     end
     return SlicedSeparableSum{typeof(fs), T, N, Th}(fs, f.idxs)
 end
@@ -141,7 +171,7 @@ end
 @generated is_strongly_convex(::Type{T}) where T <: SlicedSeparableSum = return all(is_strongly_convex, component_types(T)) ? :(true) : :(false)
 
 function prox_naive(f::SlicedSeparableSum, x, gamma)
-    fy = 0
+    fy = zero(eltype(x))
     y = similar(x)
     for t in eachindex(f.fs)
         for k in eachindex(f.fs[t])
