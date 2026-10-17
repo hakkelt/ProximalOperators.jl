@@ -124,6 +124,7 @@ end
 @testset "Utilities" begin
     include("test_symmetricpacked.jl")
     include("test_mixed_precision.jl")
+    include("test_factorization_threads.jl")
 end
 
 @testset "Functions" begin
