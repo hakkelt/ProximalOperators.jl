@@ -44,16 +44,33 @@ NormL1(lambda::R=1; buf=nothing, threaded::Bool=true) where R =
     NormL1{R, typeof(buf), threaded}(lambda, buf)
 NormL1{R}(lambda::R) where R = NormL1{R, Nothing, true}(lambda, nothing)
 
-# only the weighted variant needs scratch space, for the ∑_i λ_i|y_i| it returns
+# only the weighted variant needs scratch space, for the ∑_i λ_i|y_i| it returns, and on a
+# device a copy of the weights there
 preallocate(f::NormL1{<:AbstractArray, <:Any, Th}, x::AbstractArray) where Th = NormL1(
     f.lambda;
-    buf = (sig = input_signature(x), lam_abs_y = similar(x, real(eltype(x)))),
+    buf = (
+        sig = input_signature(x), lam_abs_y = similar(x, real(eltype(x))),
+        lambda = weights_like(f.lambda, x),
+    ),
     threaded = Th,
 )
 
+# The weights in the storage and shape of `x`. On the host they are `lambda` itself. A device
+# kernel can neither capture a host array nor index a captured device array, so there the weights
+# enter the broadcast as an argument, which needs them on the device: a copy if they are not.
+function weights_like(lambda::AbstractArray, x::AbstractArray)
+    is_cpu_storage(typeof(x)) && return lambda
+    w = is_cpu_storage(typeof(lambda)) ? copyto!(similar(x, eltype(lambda), size(lambda)), lambda) : lambda
+    return size(w) == size(x) ? w : reshape(w, size(x))
+end
+
+# Of a preallocated operator, the copy made once; otherwise one made on the spot.
+@inline weights(f::NormL1{<:AbstractArray, Nothing}, x) = weights_like(f.lambda, x)
+@inline weights(f::NormL1{<:AbstractArray}, x) = get_buffers(f, x).lambda
+
 (f::NormL1)(x) = f.lambda * norm(x, 1)
 
-(f::NormL1{<:AbstractArray})(x) = norm(f.lambda .* x, 1)
+(f::NormL1{<:AbstractArray})(x) = norm(weights_like(f.lambda, x) .* x, 1)
 
 # ∑_i λ_i |y_i|, computed through the buffer so that the summation order (and
 # therefore the result, bit for bit) is the same as `sum(lambda .* abs.(y))`
@@ -63,18 +80,30 @@ preallocate(f::NormL1{<:AbstractArray, <:Any, Th}, x::AbstractArray) where Th = 
     return sum(t)
 end
 
+# The weighted prox on a device: one broadcast with the weights as an argument, in place of the
+# indexed kernel, whose closure would capture them. `gamma` is a number or a device array.
+function weighted_prox_device!(y, f::NormL1{<:AbstractArray}, x, gamma)
+    buf = get_buffers(f, x)
+    lambda = buf.lambda
+    y .= soft_threshold.(x, gamma .* lambda)
+    buf.lam_abs_y .= lambda .* abs.(y)
+    return sum(buf.lam_abs_y)
+end
+
 # soft-thresholding, the one kernel this whole file is made of
 @inline soft_threshold(xi::Real, gl) = xi + (xi <= -gl ? gl : (xi >= gl ? -gl : -xi))
 @inline soft_threshold(xi::Complex, gl) = sign(xi) * (abs(xi) <= gl ? zero(abs(xi)) : abs(xi) - gl)
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma)
     @assert length(y) == length(x) == length(f.lambda)
+    is_cpu_storage(typeof(x)) || return weighted_prox_device!(y, f, x, gamma)
     map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma)
     @assert length(y) == length(x) == length(f.lambda)
+    is_cpu_storage(typeof(x)) || return weighted_prox_device!(y, f, x, gamma)
     map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
@@ -95,12 +124,14 @@ end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Real}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(f.lambda) == length(gamma)
+    is_cpu_storage(typeof(x)) || return weighted_prox_device!(y, f, x, gamma)
     map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
 
 function prox!(y, f::NormL1{<:AbstractArray}, x::AbstractArray{<:Complex}, gamma::AbstractArray)
     @assert length(y) == length(x) == length(f.lambda) == length(gamma)
+    is_cpu_storage(typeof(x)) || return weighted_prox_device!(y, f, x, gamma)
     map_prox_idx!(f, y, (i, xi) -> soft_threshold(xi, gamma[i] * f.lambda[i]), x)
     return weighted_l1(f, x, y)
 end
@@ -123,6 +154,11 @@ end
 
 function gradient!(y, f::NormL1, x)
     y .= f.lambda .* sign.(x)
+    return f(x)
+end
+
+function gradient!(y, f::NormL1{<:AbstractArray}, x)
+    y .= weights(f, x) .* sign.(x)
     return f(x)
 end
 
