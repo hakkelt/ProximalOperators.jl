@@ -159,6 +159,40 @@ gpu_gradient_cases() = Any[
     end
 end
 
+# A weighted `NormL1` carries an array. JLArrays runs a broadcast's function on the host, where
+# a closure may capture any array and index it; a real device compiles the function, and then
+# refuses both a captured host array and an indexed captured device array. So what is checked
+# here is the shape that works there: the weights reach the device once, in `preallocate`, and
+# the prox is a broadcast over them.
+@testset "gpu: weighted NormL1 keeps its weights on the device" begin
+    for T in (Float64, ComplexF32), dims in ((40,), (6, 5, 3))
+        R = real(T)
+        x = randn(T, dims...)
+        lambda = rand(R, dims...) .+ R(0.1)
+        gammas = rand(R, dims...) .+ R(0.5)
+        xd = to_device(x)
+        for lam in (lambda, to_device(lambda))
+            f = NormL1(lam)
+            fh = NormL1(Array(lam))
+            fd = ProximalOperators.preallocate(f, xd)
+            @test fd.buf.lambda isa JLArray
+            @test size(fd.buf.lambda) == size(x)
+            for g in (fd, f), (gamma, gamma_d) in ((R(0.7), R(0.7)), (gammas, to_device(gammas)))
+                yd, yh = similar(xd), similar(x)
+                @test same(prox!(yd, g, xd, gamma_d), prox!(yh, fh, x, gamma))
+                @test yd isa JLArray
+                @test same(to_host(yd), yh)
+                @test same(g(xd), fh(x))
+            end
+            if T <: Real
+                gd, gh = similar(xd), similar(x)
+                @test same(ProximalOperators.gradient!(gd, fd, xd), ProximalOperators.gradient!(gh, fh, x))
+                @test same(to_host(gd), gh)
+            end
+        end
+    end
+end
+
 @testset "gpu: gradients run on device arrays" begin
     for (name, f, x) in gpu_gradient_cases()
         @testset "$name" begin
