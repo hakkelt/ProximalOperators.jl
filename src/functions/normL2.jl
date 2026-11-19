@@ -26,7 +26,6 @@ end
 
 is_convex(f::Type{<:NormL2}) = true
 is_positively_homogeneous(f::Type{<:NormL2}) = true
-is_locally_smooth(f::Type{<:NormL2}) = true
 
 @threadable NormL2{<:Any, Th} MemoryBound
 
