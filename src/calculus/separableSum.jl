@@ -70,12 +70,14 @@ preallocate(g::SeparableSum{<:Any, Th}, xs::Tuple) where Th =
 # all-or-nothing, so a child that still permits threading would try (and fail, expensively)
 # to claim a pool this block loop already holds. See `unthreaded` in
 # `src/utilities/execution.jl`.
-@inline function _prox_blocks!(ys::Tuple, fs::Tuple, xs::Tuple, gammas, R::Type)
+@inline function _prox_blocks!(ys::Tuple, fs::Tuple, xs::Tuple, gammas, ::Type{R}) where {R}
     fs = map(unthreaded, fs)
-    return NestedThreading.with_restricted_threads() do
+    # `with_restricted_threads` does not infer its block's return type
+    total = NestedThreading.with_restricted_threads() do
         tasks = map((y, f, x, gamma) -> Threads.@spawn(prox!(y, f, x, gamma)), ys, fs, xs, gammas)
         sum(t -> fetch(t)::R, tasks)
     end
+    return total::R
 end
 
 @inline _block_work(xs::Tuple) = sum(length, xs)

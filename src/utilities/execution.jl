@@ -115,10 +115,15 @@ rebuilding them unthreaded first turns the block parallelism into a real win.
 """
 @inline function unthreaded(f::F) where F
     (supports_threading(F) && permits_threading(F)) || return f
+    return _unthreaded_type(F)(ntuple(i -> getfield(f, i), Val(fieldcount(F)))...)
+end
+
+# The rebuilt type is computed in a generator so that it is a compile-time constant and
+# `unthreaded` infers to it; a runtime `typename` lookup would infer as `Any`.
+@generated function _unthreaded_type(::Type{F}) where F
     W = Base.typename(F).wrapper
-    ps = Base.unwrap_unionall(F).parameters
-    G = W{ps[1:(end - 1)]..., false}
-    return G((getfield(f, name) for name in fieldnames(F))...)
+    ps = F.parameters
+    return W{ps[1:(end - 1)]..., false}
 end
 
 """
