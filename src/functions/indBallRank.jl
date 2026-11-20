@@ -54,8 +54,9 @@ function (f::IndBallRank)(x)
         runs_natively(svdvals!, x) || return host_call(f, x)
     end
     S = Array(svdvals(x))[1:(f.r + 1)]
-    # the tolerance in the following line should be customizable
-    if S[end] / S[1] <= 1.0e-7
+    # the tolerance in the following line should be customizable; a zero matrix has rank 0,
+    # and its ratio would be 0/0
+    if iszero(S[1]) || S[end] / S[1] <= 1.0e-7
         return R(0)
     end
     return R(Inf)

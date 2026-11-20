@@ -605,3 +605,10 @@ test_cases_spec = [
 
     end
 end
+
+@testset "IndBallRank of a zero matrix" begin
+    for T in (Float32, Float64, ComplexF64)
+        @test IndBallRank(1)(zeros(T, 4, 4)) == 0
+        @test IndBallRank(2)(zeros(T, 5, 3)) == 0
+    end
+end
