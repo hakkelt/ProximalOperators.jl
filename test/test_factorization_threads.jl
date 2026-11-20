@@ -15,7 +15,7 @@ using Random
         NT.with_thread_default(1; only = (:blas,)) do
             @test counted(zeros(4, 4)) == 1             # below the gate: the default stands
             @test counted(zeros(8, 4)) == blas          # at the gate: BLAS's own count back
-            NT.with_thread_budget(1) do                 # a hard limit is never granted past
+            NT.with_thread_limit(1) do                 # a hard limit is never granted past
                 @test counted(zeros(8, 4)) == 1
             end
         end
