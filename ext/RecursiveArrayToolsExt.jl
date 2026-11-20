@@ -1,7 +1,12 @@
 module RecursiveArrayToolsExt
 using RecursiveArrayTools
 using ProximalOperators
+using ProximalOperators: preallocate
 import ProximalCore: prox, prox!, gradient, gradient!
+
+# An `ArrayPartition` is unwrapped to its tuple of blocks before being handed to
+# the wrapped function, so preallocation follows the same route.
+ProximalOperators.preallocate(g::SeparableSum, xs::ArrayPartition) = preallocate(g, xs.x)
 
 (f::PrecomposedSlicedSeparableSum)(x::ArrayPartition) = f(x.x)
 prox!(y::ArrayPartition, f::PrecomposedSlicedSeparableSum, x::ArrayPartition, gamma) = prox!(y.x, f, x.x, gamma)
