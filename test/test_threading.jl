@@ -319,4 +319,16 @@ end
         @test Base.return_types(prox!, (typeof(y), typeof(f), typeof(x), Float64))[1] ===
             real(eltype(x))
     end
+
+    # block-parallel rules rebuild each child unthreaded; that rebuild must infer
+    for f in (NormL1(0.3), NormL2(0.5), NormL1(0.3; threaded = false))
+        @test @inferred(ProximalOperators.unthreaded(f)) isa typeof(f).name.wrapper
+        @test ProximalOperators.is_threaded(ProximalOperators.unthreaded(f), randn(1 << 20)) == false
+    end
+    g = SlicedSeparableSum((NormL2(2.0), NormL1(1.5), NormL2(0.5)), ((1:5,), (6:20,), (21:30,)))
+    x = randn(30)
+    @test @inferred(prox!(similar(x), g, x, 1.0)) isa Float64
+    xs = Tuple(randn(1 << 14) for _ in 1:6)
+    h = SeparableSum(Tuple(NormL1(0.3) for _ in 1:6)...)
+    @test @inferred(prox!(similar.(xs), h, xs, 0.7)) isa Float64
 end
