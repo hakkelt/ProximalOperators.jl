@@ -38,16 +38,16 @@ export prox, prox!, gradient, gradient!
 
 # Utilities
 
+include("utilities/execution.jl")
+include("utilities/kernels.jl")
+include("utilities/bisection.jl")
+include("utilities/hostfallback.jl")
 include("utilities/preallocation.jl")
 include("utilities/approx_inequality.jl")
 include("utilities/linops.jl")
 include("utilities/symmetricpacked.jl")
 include("utilities/uniformarrays.jl")
 include("utilities/normdiff.jl")
-include("utilities/execution.jl")
-include("utilities/kernels.jl")
-include("utilities/bisection.jl")
-include("utilities/hostfallback.jl")
 
 # Basic functions
 

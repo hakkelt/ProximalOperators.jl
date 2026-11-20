@@ -107,7 +107,7 @@ of needing a method per operator.
 
 A block-parallel calculus rule (`SeparableSum`, `SlicedSeparableSum`) must call this on each
 child before handing it to a spawned task or an inner `@batch` iteration: `Polyester`'s pool
-is a single all-or-nothing resource (see `NestedThreadingPolyesterExt`), so a child that still
+is a single all-or-nothing resource (see `NestedThreadingPolyesterWeaveExt`), so a child that still
 *tries* to thread pays a full `@batch` launch while running on a pool the parent has already
 claimed. Measured on 8 blocks of 2^17 elements: children left threaded inside a spawned block
 region cost 1957us against 574us serial (worse than not parallelising the blocks at all);
@@ -115,10 +115,15 @@ rebuilding them unthreaded first turns the block parallelism into a real win.
 """
 @inline function unthreaded(f::F) where F
     (supports_threading(F) && permits_threading(F)) || return f
+    return _unthreaded_type(F)(ntuple(i -> getfield(f, i), Val(fieldcount(F)))...)
+end
+
+# The rebuilt type is computed in a generator so that it is a compile-time constant and
+# `unthreaded` infers to it; a runtime `typename` lookup would infer as `Any`.
+@generated function _unthreaded_type(::Type{F}) where F
     W = Base.typename(F).wrapper
-    ps = Base.unwrap_unionall(F).parameters
-    G = W{ps[1:(end - 1)]..., false}
-    return G((getfield(f, name) for name in fieldnames(F))...)
+    ps = F.parameters
+    return W{ps[1:(end - 1)]..., false}
 end
 
 """
@@ -294,11 +299,6 @@ function _isolate(body, vars)
     return Expr(:(=), out, inner)
 end
 
-# `minbatch` is what keeps `@batch` from splitting a loop into slivers. The default suits an
-# elementwise loop over array entries; a loop whose iterations are whole slices passes its
-# own, so it is only supplied when the caller did not.
-_has_minbatch(opts) = any(o -> o isa Expr && o.head === :(=) && o.args[1] === :minbatch, opts)
-
 function _check_loop(loop, name)
     (loop isa Expr && loop.head === :for) ||
         error("ProximalOperators: `@$name` expects a `for` loop, got `$loop`")
@@ -317,23 +317,70 @@ const _BATCH_HEAD = Expr(:., GlobalRef(@__MODULE__, :Polyester), QuoteNode(Symbo
 
 _batch_call(source, opts, loop) = Expr(:macrocall, _BATCH_HEAD, source, opts..., loop)
 
-# Polyester's `@batch` insists on a bare `for` -- it rejects `@inbounds for ...` outright --
-# so the elision goes around the loop *body* instead of around the loop.
+# The threaded branch splits the range into one contiguous chunk per thread and runs each
+# chunk as an ordinary `@inbounds @simd` loop inside `@batch` (which itself only accepts a
+# bare `for`). Both branches therefore compile the body under the same rules: IEEE
+# arithmetic, plus `@simd`'s permission to reassociate reductions, so the threaded and
+# serial results differ only by that reassociation. Bodies must vectorize under those rules
+# on their own -- `abs2` rather than `abs(z)^2`, `ifelse` rather than a branch -- and must
+# not be given `@fastmath`: its no-NaN/no-Inf assumptions do not hold for proximal kernels,
+# where a zero or subnormal block norm is routine at a sparse solution (`γλ / 0` must be
+# `Inf`), and violating them yields NaN.
 #
-# `@fastmath` goes around the body for the same reason `@simd` goes around the serial
-# branch's loop: without it, a division- or branch-heavy body (`SqrHingeLoss`'s prox kernel,
-# say) keeps strict IEEE ordering per thread, which serializes the reduction and stalls the
-# pipeline on the division latency -- measured at 2038us for 2^20 elements over 4 threads,
-# slower than the 574us serial `@simd` path it should be beating. `@simd` grants the serial
-# branch that same reassociation freedom already, so giving the threaded branch `@fastmath`
-# is matching a relaxation the package already accepts elsewhere, not adding a new one:
-# with it, the same body drops to 295us. Every `@elementwise_loop`/`@transcendental_loop`
-# reduction in the package already tolerates this (their tests pass under `@simd`), so this
-# is not a new numerical contract, only extending the existing one to the threaded branch.
-function _inbounds_body(loop::Expr)
-    fastmath = Expr(:macrocall, GlobalRef(Base, Symbol("@fastmath")), nothing, copy(loop.args[2]))
-    body = Expr(:macrocall, GlobalRef(Base, Symbol("@inbounds")), nothing, fastmath)
-    return Expr(:for, copy(loop.args[1]), body)
+# Chunking needs a unit range to split. Any other iterator (`eachindex` of an
+# `IndexCartesian` array is a `CartesianIndices`) runs as a plain `@batch` loop, one body
+# per index, with the same IEEE body.
+
+# Number of chunks: at most one per thread, and none shorter than `minbatch` iterations, which
+# keeps a short loop from being split into slivers. The default `minbatch` suits a loop over
+# array entries; a loop whose iterations are whole slices passes its own.
+@inline _nchunks(n::Integer, minbatch::Integer) =
+    min(Threads.nthreads(), cld(n, max(minbatch, 1)))
+
+# The `c`th of `nc` contiguous, near-equal pieces of the unit range `r`.
+@inline function _chunk(r::AbstractUnitRange, c::Integer, nc::Integer)
+    n = length(r)
+    lo = first(r) + div((c - 1) * n, nc)
+    hi = first(r) + div(c * n, nc) - 1
+    return lo:hi
+end
+
+_budgeted(source, ex) = Expr(:macrocall, GlobalRef(NestedThreading, Symbol("@budgeted")), source, ex)
+
+function _threaded_loop(source, opts, loop::Expr, default_minbatch)
+    spec, body = loop.args
+    minbatch = default_minbatch
+    rest = Any[]
+    for o in opts
+        if o isa Expr && o.head === :(=) && o.args[1] === :minbatch
+            minbatch = o.args[2]
+        else
+            push!(rest, o)
+        end
+    end
+    inbounds(ex) = Expr(:macrocall, GlobalRef(Base, Symbol("@inbounds")), nothing, ex)
+    if !(spec isa Expr && spec.head === :(=) && spec.args[1] isa Symbol)
+        plain = Expr(:for, copy(spec), inbounds(copy(body)))
+        return _budgeted(source, _batch_call(source, (rest..., :(minbatch = $minbatch)), plain))
+    end
+    var, itr = spec.args
+    r, nc, c = gensym("range"), gensym("nchunks"), gensym("chunk")
+    inner = Expr(:for, Expr(:(=), var, Expr(:call, GlobalRef(@__MODULE__, :_chunk), r, c, nc)),
+                 copy(body))
+    inner = inbounds(Expr(:macrocall, GlobalRef(Base, Symbol("@simd")), nothing, inner))
+    chunks = Expr(:for, Expr(:(=), c, Expr(:call, GlobalRef(Base, :(:)), 1, nc)), inner)
+    chunked = _budgeted(source, _batch_call(source, (rest..., :(minbatch = 1)), chunks))
+    plain = Expr(:for, Expr(:(=), var, r), inbounds(copy(body)))
+    plain = _budgeted(source, _batch_call(source, (rest..., :(minbatch = $minbatch)), plain))
+    return quote
+        $r = $itr
+        if $r isa $(GlobalRef(Base, :AbstractUnitRange))
+            $nc = $(GlobalRef(@__MODULE__, :_nchunks))($(GlobalRef(Base, :length))($r), $minbatch)
+            $chunked
+        else
+            $plain
+        end
+    end
 end
 
 """
@@ -348,11 +395,7 @@ macro elementwise_loop(strategy, args...)
     opts = args[1:(end - 1)]
     vars = _reduction_vars(opts)
     serial = _isolate(:(@inbounds @simd $(copy(loop))), vars)
-    batch = _batch_call(__source__,
-                        (opts..., (_has_minbatch(opts) ? () : (:(minbatch = 4096),))...),
-                        _inbounds_body(loop))
-    batch = Expr(:macrocall, GlobalRef(NestedThreading, Symbol("@budgeted")), __source__, batch)
-    batch = _isolate(batch, vars)
+    batch = _isolate(_threaded_loop(__source__, opts, loop, 4096), vars)
     pre, post = _accum_types(vars)
     quote
         local strat = $(esc(strategy))
@@ -379,11 +422,7 @@ macro transcendental_loop(strategy, args...)
     opts = args[1:(end - 1)]
     vars = _reduction_vars(opts)
     serial = _isolate(:(@inbounds @simd $(copy(loop))), vars)
-    batch = _batch_call(__source__,
-                        (opts..., (_has_minbatch(opts) ? () : (:(minbatch = 1024),))...),
-                        _inbounds_body(loop))
-    batch = Expr(:macrocall, GlobalRef(NestedThreading, Symbol("@budgeted")), __source__, batch)
-    batch = _isolate(batch, vars)
+    batch = _isolate(_threaded_loop(__source__, opts, loop, 1024), vars)
     turbo = _isolate(Expr(:macrocall, GlobalRef(LoopVectorization, Symbol("@turbo")), __source__,
                  :(warn_check_args = false), copy(loop)), vars)
     tturbo = _isolate(Expr(:macrocall, GlobalRef(LoopVectorization, Symbol("@tturbo")), __source__,
@@ -419,7 +458,7 @@ end
 # operators issue.
 
 @inline _with_blas_threading(f::F, threaded::Bool) where {F} =
-    threaded ? f() : NestedThreading.with_restricted_threads(f)
+    threaded ? f() : NestedThreading.with_threads_disabled(f)
 
 @inline _with_blas_threading(f::F, op, x) where {F} =
     _with_blas_threading(f, permits_threading(op))
@@ -496,7 +535,7 @@ end
 # `MIN_BLOCKS_FOR_PARALLEL` is a separate condition and not folded into the threshold.
 #
 # The budget scope alone is not enough for a child that threads through `Polyester`: that
-# pool is claimed all-or-nothing (see `NestedThreadingPolyesterExt`), not shared out in
+# pool is claimed all-or-nothing (see `NestedThreadingPolyesterWeaveExt`), not shared out in
 # degrees the way a BLAS thread count is, so a still-threaded child pays a full `@batch`
 # launch against a pool with nothing free. `unthreaded` (above) is how these loops veto that:
 # each child is rebuilt with `threaded = false` before it is proxed, so it runs its own
