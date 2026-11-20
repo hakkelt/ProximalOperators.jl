@@ -29,7 +29,6 @@ end
 is_separable(f::Type{<:ElasticNet}) = true
 is_proximable(f::Type{<:ElasticNet}) = true
 is_convex(f::Type{<:ElasticNet}) = true
-is_locally_smooth(f::Type{<:ElasticNet}) = true
 
 @threadable ElasticNet{<:Any, <:Any, Th} Arithmetic
 

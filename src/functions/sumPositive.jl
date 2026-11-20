@@ -20,7 +20,6 @@ SumPositive(; threaded::Bool=true) = SumPositive{threaded}()
 is_separable(f::Type{<:SumPositive}) = true
 is_convex(f::Type{<:SumPositive}) = true
 is_positively_homogeneous(f::Type{<:SumPositive}) = true
-is_locally_smooth(f::Type{<:SumPositive}) = true
 
 @threadable SumPositive{Th} Arithmetic
 

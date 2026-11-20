@@ -11,6 +11,7 @@ using ProximalCore:
     is_affine_indicator,
     is_set_indicator,
     is_smooth,
+    is_locally_smooth,
     is_quadratic,
     is_generalized_quadratic,
     is_strongly_convex,
@@ -124,6 +125,7 @@ end
 @testset "Utilities" begin
     include("test_symmetricpacked.jl")
     include("test_mixed_precision.jl")
+    include("test_locally_smooth.jl")
 end
 
 @testset "Functions" begin

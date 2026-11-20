@@ -63,7 +63,7 @@ function (f::NormL21)(X)
         @elementwise_loop strategy reduction = ((+, n21X),) minbatch = 1 for j in axes(X, 2)
             nslice = R(0)
             for i in axes(X, 1)
-                nslice += abs(X[i, j])^2
+                nslice += abs2(X[i, j])
             end
             n21X += sqrt(nslice)
         end
@@ -71,7 +71,7 @@ function (f::NormL21)(X)
         @elementwise_loop strategy reduction = ((+, n21X),) minbatch = 1 for i in axes(X, 1)
             nslice = R(0)
             for j in axes(X, 2)
-                nslice += abs(X[i, j])^2
+                nslice += abs2(X[i, j])
             end
             n21X += sqrt(nslice)
         end
@@ -89,11 +89,11 @@ function prox!(Y, f::NormL21, X, gamma)
         @elementwise_loop strategy reduction = ((+, n21X),) minbatch = 1 for j in axes(X, 2)
             nslice = R(0)
             for i in axes(X, 1)
-                nslice += abs(X[i, j])^2
+                nslice += abs2(X[i, j])
             end
             nslice = sqrt(nslice)
             scal = 1 - gl / nslice
-            scal = scal <= 0 ? R(0) : scal
+            scal = ifelse(scal > 0, scal, R(0))
             for i in axes(X, 1)
                 Y[i, j] = scal * X[i, j]
             end
@@ -103,11 +103,11 @@ function prox!(Y, f::NormL21, X, gamma)
         @elementwise_loop strategy reduction = ((+, n21X),) minbatch = 1 for i in axes(X, 1)
             nslice = R(0)
             for j in axes(X, 2)
-                nslice += abs(X[i, j])^2
+                nslice += abs2(X[i, j])
             end
             nslice = sqrt(nslice)
-            scal = 1-gl/nslice
-            scal = scal <= 0 ? R(0) : scal
+            scal = 1 - gl / nslice
+            scal = ifelse(scal > 0, scal, R(0))
             for j in axes(X, 2)
                 Y[i, j] = scal * X[i, j]
             end

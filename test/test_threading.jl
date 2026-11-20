@@ -156,6 +156,78 @@ end
     end
 end
 
+# The threaded branch compiles the body under the same IEEE rules as the serial one, so a
+# zero or subnormal norm behaves the same on both: `γλ / 0` is `Inf` and the shrinkage
+# factor is 0, never NaN. Such norms are routine at a sparse solution. `Batch()` is forced,
+# so this runs on a single thread too.
+function shrink_kernel!(strategy, y, x, gl)
+    acc = zero(real(eltype(x)))
+    @elementwise_loop strategy reduction = ((+, acc),) for i in eachindex(x, y)
+        nx = abs(x[i])
+        sc = 1 - gl / nx
+        sc = sc <= 0 ? zero(sc) : sc
+        y[i] = sc * x[i]
+        acc += sc * nx
+    end
+    return acc
+end
+
+# norms from 0 through Float32's subnormal range to normal values
+function tiny_input(n)
+    Random.seed!(0)
+    x = randn(ComplexF32, n)
+    x .*= exp10.(range(-26f0, -17f0; length = n)) ./ abs.(x)
+    x[1:8:end] .= 0
+    return x
+end
+
+@testset "threading: the batched branch keeps IEEE semantics" begin
+    x = tiny_input(1 << 14)
+    yb = similar(x); ys = similar(x)
+    vb = shrink_kernel!(Batch(), yb, x, 0.3f0)
+    vs = shrink_kernel!(Simd(), ys, x, 0.3f0)
+    @test !any(isnan, yb)
+    @test isfinite(vb)
+    @test yb == ys
+    @test isapprox(vb, vs; rtol = sqrt(eps(Float32)))
+
+    # a non-unit-range iterator (`CartesianIndices` of a strided view) is not chunked
+    X = reshape(tiny_input(1 << 14), 1 << 7, :)
+    xv = view(X, 1:2:size(X, 1), :)
+    @test eachindex(xv, xv) isa CartesianIndices
+    yb = similar(xv); ys = similar(xv)
+    vb = shrink_kernel!(Batch(), yb, xv, 0.3f0)
+    vs = shrink_kernel!(Simd(), ys, xv, 0.3f0)
+    @test !any(isnan, yb)
+    @test yb == ys
+    @test isapprox(vb, vs; rtol = sqrt(eps(Float32)))
+end
+
+@testset "threading: chunks partition the range" begin
+    for r in (1:0, 1:1, 1:7, 3:1000, Base.OneTo(1 << 20)), nc in (1, 2, 3, 4, 7)
+        cs = [ProximalOperators._chunk(r, c, nc) for c in 1:nc]
+        @test reduce(vcat, collect.(cs); init = Int[]) == collect(r)
+    end
+end
+
+@testset "threading: NormL21 with zero and subnormal rows" begin
+    n = 1 << 16
+    X = hcat(tiny_input(n), tiny_input(n))
+    for dim in (1, 2)
+        Xd = dim == 1 ? permutedims(X) : X
+        ft = NormL21(0.3f0, dim)
+        fs = NormL21(0.3f0, dim; threaded = false)
+        Yt = similar(Xd); Ys = similar(Xd)
+        vt = prox!(Yt, ft, Xd, 1f0)
+        vs = prox!(Ys, fs, Xd, 1f0)
+        @test isfinite(vt)
+        @test !any(isnan, Yt)
+        @test Yt == Ys
+        @test isapprox(vt, vs; rtol = sqrt(eps(Float32)))
+        @test isapprox(ft(Xd), fs(Xd); rtol = sqrt(eps(Float32)))
+    end
+end
+
 @testset "threading: storage is respected" begin
     x = randn(1 << 18)
     @test is_cpu_storage(x)
@@ -201,6 +273,22 @@ end
     @test isapprox(vt, vs; rtol = sqrt(eps(Float64)))
     @test supports_threading(gt)
     @test is_threaded(gs, x) == false
+
+    # slices whose functions were preallocated for them: the threaded path must hand each
+    # one the `SubArray` it was prepared for. Under `Polyester.@batch` they arrived as
+    # `PtrArray`s, which failed the signature check (and sent `NuclearNorm` to the host).
+    let m = 4096, t = 8, k = 4
+        idxm = Tuple((:, :, i) for i in 1:k)
+        X = randn(m, t, k)
+        for f in (NuclearNorm(0.5), IndBallRank(2))
+            pt = preallocate(SlicedSeparableSum(f, idxm), X)
+            ps = preallocate(SlicedSeparableSum(f, idxm; threaded = false), X)
+            Yt = similar(X); Ys = similar(X)
+            @test prox!(Yt, pt, X, 0.7) ≈ prox!(Ys, ps, X, 0.7)
+            @test Yt ≈ Ys
+            @test pt(Yt) ≈ ps(Ys)
+        end
+    end
 
     # a SeparableSum below the block-count floor never spawns, however large the blocks
     two = SeparableSum(NormL1(0.3), NormL1(0.4))
