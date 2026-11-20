@@ -27,6 +27,7 @@ IndBallL2
 IndBallRank   
 IndBinary
 IndBox  
+IndRealBox  
 IndGraph     
 IndHalfspace  
 IndHyperslab
@@ -47,6 +48,7 @@ IndExpPrimal
 IndExpDual
 IndFree
 IndNonnegative
+IndRealNonnegative
 IndNonpositive
 IndPSD
 IndSOC
