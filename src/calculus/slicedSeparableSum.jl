@@ -82,8 +82,8 @@ _slice(x, idx) = view(x, idx)
 function _sum_slices(g, strategy::Strategy, ks)
     if strategy isa Batch
         chunks = Iterators.partition(ks, cld(length(ks), Threads.nthreads()))
-        # `with_restricted_threads` does not infer its block's return type
-        total = NestedThreading.with_restricted_threads() do
+        # `with_threads_disabled` does not infer its block's return type
+        total = NestedThreading.with_threads_disabled() do
             tasks = map(chunks) do chunk
                 Threads.@spawn begin
                     s = 0.0
