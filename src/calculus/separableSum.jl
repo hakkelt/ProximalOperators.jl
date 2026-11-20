@@ -72,8 +72,8 @@ preallocate(g::SeparableSum{<:Any, Th}, xs::Tuple) where Th =
 # `src/utilities/execution.jl`.
 @inline function _prox_blocks!(ys::Tuple, fs::Tuple, xs::Tuple, gammas, ::Type{R}) where {R}
     fs = map(unthreaded, fs)
-    # `with_restricted_threads` does not infer its block's return type
-    total = NestedThreading.with_restricted_threads() do
+    # `with_threads_disabled` does not infer its block's return type
+    total = NestedThreading.with_threads_disabled() do
         tasks = map((y, f, x, gamma) -> Threads.@spawn(prox!(y, f, x, gamma)), ys, fs, xs, gammas)
         sum(t -> fetch(t)::R, tasks)
     end

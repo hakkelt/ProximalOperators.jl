@@ -107,7 +107,7 @@ of needing a method per operator.
 
 A block-parallel calculus rule (`SeparableSum`, `SlicedSeparableSum`) must call this on each
 child before handing it to a spawned task or an inner `@batch` iteration: `Polyester`'s pool
-is a single all-or-nothing resource (see `NestedThreadingPolyesterExt`), so a child that still
+is a single all-or-nothing resource (see `NestedThreadingPolyesterWeaveExt`), so a child that still
 *tries* to thread pays a full `@batch` launch while running on a pool the parent has already
 claimed. Measured on 8 blocks of 2^17 elements: children left threaded inside a spawned block
 region cost 1957us against 574us serial (worse than not parallelising the blocks at all);
@@ -458,7 +458,7 @@ end
 # operators issue.
 
 @inline _with_blas_threading(f::F, threaded::Bool) where {F} =
-    threaded ? f() : NestedThreading.with_restricted_threads(f)
+    threaded ? f() : NestedThreading.with_threads_disabled(f)
 
 @inline _with_blas_threading(f::F, op, x) where {F} =
     _with_blas_threading(f, permits_threading(op))
@@ -496,7 +496,7 @@ end
 # `MIN_BLOCKS_FOR_PARALLEL` is a separate condition and not folded into the threshold.
 #
 # The budget scope alone is not enough for a child that threads through `Polyester`: that
-# pool is claimed all-or-nothing (see `NestedThreadingPolyesterExt`), not shared out in
+# pool is claimed all-or-nothing (see `NestedThreadingPolyesterWeaveExt`), not shared out in
 # degrees the way a BLAS thread count is, so a still-threaded child pays a full `@batch`
 # launch against a pool with nothing free. `unthreaded` (above) is how these loops veto that:
 # each child is rebuilt with `threaded = false` before it is proxed, so it runs its own
