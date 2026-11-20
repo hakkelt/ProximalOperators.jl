@@ -32,6 +32,7 @@ struct NormL1{T, B, Th}
     end
 end
 
+is_proximable(f::Type{<:NormL1}) = true
 is_separable(f::Type{<:NormL1}) = true
 is_convex(f::Type{<:NormL1}) = true
 is_positively_homogeneous(f::Type{<:NormL1}) = true

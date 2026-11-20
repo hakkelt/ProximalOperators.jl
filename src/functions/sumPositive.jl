@@ -28,11 +28,10 @@ function (::SumPositive)(x)
 end
 
 function prox!(y, f::SumPositive, x, gamma)
-    R = eltype(x)
     fsum = map_reduce_prox!(
         f, y,
-        xi -> xi < gamma ? (xi > 0 ? R(0) : xi) : xi - gamma,
-        yi -> yi > 0 ? yi : R(0),
+        xi -> xi < gamma ? (xi > 0 ? zero(xi) : xi) : xi - gamma,
+        yi -> yi > 0 ? yi : zero(yi),
         x,
     )
     return fsum
@@ -57,11 +56,10 @@ end
 # ######################### #
 
 function prox!(y, f::SumPositive, x, gamma::AbstractArray)
-    R = eltype(x)
     fsum = map_reduce_prox_idx!(
         f, y,
-        (i, xi) -> xi < gamma[i] ? (xi > 0 ? R(0) : xi) : xi - gamma[i],
-        (i, yi) -> yi > 0 ? yi : R(0),
+        (i, xi) -> xi < gamma[i] ? (xi > 0 ? zero(xi) : xi) : xi - gamma[i],
+        (i, yi) -> yi > 0 ? yi : zero(yi),
         x,
     )
     return fsum
