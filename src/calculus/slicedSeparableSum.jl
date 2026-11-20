@@ -82,18 +82,20 @@ _slice(x, idx) = view(x, idx)
 function _sum_slices(g, strategy::Strategy, ks)
     if strategy isa Batch
         chunks = Iterators.partition(ks, cld(length(ks), Threads.nthreads()))
-        return NestedThreading.with_restricted_threads() do
+        # `with_restricted_threads` does not infer its block's return type
+        total = NestedThreading.with_restricted_threads() do
             tasks = map(chunks) do chunk
                 Threads.@spawn begin
-                    v = 0.0
+                    s = 0.0
                     for k in chunk
-                        v += g(k, true)
+                        s += g(k, true)
                     end
-                    v
+                    s
                 end
             end
             sum(t -> fetch(t)::Float64, tasks; init = 0.0)
         end
+        return total::Float64
     end
     v = 0.0
     for k in ks
