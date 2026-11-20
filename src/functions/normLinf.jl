@@ -13,6 +13,7 @@ for a nonnegative parameter `λ`.
 """
 NormLinf(lambda::T=1) where T = Conjugate(IndBallL1(lambda))
 
+
 (f::Conjugate{<:IndBallL1})(x) = (f.f.r) * norm(x, Inf)
 
 function gradient!(y, f::Conjugate{<:IndBallL1}, x)
