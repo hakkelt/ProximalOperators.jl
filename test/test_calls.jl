@@ -605,3 +605,22 @@ test_cases_spec = [
 
     end
 end
+
+@testset "IndBallRank of a zero matrix" begin
+    for T in (Float32, Float64, ComplexF64)
+        @test IndBallRank(1)(zeros(T, 4, 4)) == 0
+        @test IndBallRank(2)(zeros(T, 5, 3)) == 0
+    end
+end
+
+@testset "IndBallRank prox of a matrix of rank below r" begin
+    # Lanczos breaks down on these; the prox falls back to a full SVD
+    u = randn(6)
+    for (X, r) in ((zeros(4, 4), 1), (ones(4, 4), 2), (u * randn(5)', 2),
+                   (randn(50, 2) * randn(2, 40), 5), (zeros(ComplexF64, 5, 3), 2))
+        Y = similar(X)
+        @test prox!(Y, IndBallRank(r), X, 1.0) == 0
+        @test Y ≈ X atol = 1.0e-10
+        @test IndBallRank(r)(Y) == 0
+    end
+end
